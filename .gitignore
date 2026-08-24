@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- the browser port: its own repository ---
+web/
+
+# --- reverse-engineering scratch, not part of the editor ---
+research/
+
+# --- local saves, backups and scratch working copies ---
+work/
+backups/
+samples/
+LEVEL5 Inc_/
+*.bin
+*.bak
+*.gvas
+
+# --- but the shipped game databases are wanted ---
+!data/fli_text.json.gz
+!data/fli_gear.json.gz
+
+# --- OS / editor noise ---
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
+
+# --- belongs to the browser port's own repository ---
+tools/build_webdata.py
+
+# --- scratch smoke test, needs samples/gamedata.bin ---
+t_gui.py
