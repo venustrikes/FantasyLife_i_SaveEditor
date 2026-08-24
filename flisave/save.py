@@ -10,7 +10,7 @@ from typing import Iterable, List, Optional, Tuple
 
 from .codec import SaveContainer, SaveCodecError
 from .gvas import GvasHeader
-from .items import (ItemSection, ItemRecord, EMPTY, _fstring_len,
+from .items import (ItemSection, ItemRecord, EMPTY, _fstring_len, heal_core_names,
                     category_for as _items_category)
 from .lives import LifeSection
 from .world import (BoardSection, HugeMap, SyncFlags, TravelPoints, BOARDS,
@@ -295,6 +295,26 @@ class SaveFile:
             rec.quantity = quantity
             changed += 1
         return changed
+
+    def repair_records(self, *, apply: bool = True) -> List[str]:
+        """Heal item records an editor blind to ``extra_name`` overwrote.
+
+        This is the damage that stops a save loading at all rather than merely
+        looking wrong, so it runs on the raw payload before anything tries to
+        parse the item block -- by the time the parser gets there the record
+        lengths have already stopped adding up.  See
+        :func:`flisave.items.heal_core_names`.
+        """
+        healed, notes = heal_core_names(bytes(self.payload))
+        if notes and apply:
+            self.payload = bytearray(healed)
+            self._items = None
+            self._items_error = None
+            self._lives = None
+            self._boards = None
+            self._hugemap = None
+            self._flags = None
+        return notes
 
     def repair_gear(self, *, apply: bool = True) -> List[str]:
         """Put earlier-spawned gear right: correct bag, and a title with stats.

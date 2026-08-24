@@ -15,7 +15,19 @@ category-specific extension bolted on:
     uint32  is_presented      serialised as a 4-byte bool
     FString aoc_id            ("None" unless the item came from add-on content)
     FString expired_item_id   ("None")
+    FString extra_name        newer builds only -- see below
     bytes   ext        the extension, which differs per category
+
+``extra_name`` is a third FName that builds from ``rev110414`` (the LEVEL5
+sub-header's version 10) write after ``expired_item_id``; saves from the
+December 2025 build do not have it and older ones will not grow one.  It is
+``"None"`` on every record of every save seen so far, so nothing reads it --
+but it sits *in front of* the extension, and an editor that misses it lands
+nine bytes early: ``ext[0]``, the equipment title, becomes the low byte of that
+FName's length and ``ext[1]``, the quality, the byte above it.  Writing a
+quality of 3 there turns a five-byte ``"None"`` into a 773-byte string and the
+game cannot read past the record.  :func:`_has_extra_name` tells the two
+layouts apart from the file itself rather than from a version number.
 
 The extension is *not* the same shape in every bag, which is why it is carried
 through verbatim and its layout learned from the array's own records rather
@@ -43,6 +55,7 @@ from .stream import Reader, pack_fstring
 TAG = 0x189C9D08
 TAG_BYTES = struct.pack("<I", TAG)
 EMPTY = "None"
+_EMPTY_NAME = EMPTY.encode("ascii") + bytes(1)   # how a "None" FName reads on disk
 
 # EInventoryCategory: the array index is the enum value, and the handle packs it
 # into the top nibble.  Only the bags a player actually fills are named here;
@@ -197,6 +210,52 @@ def _equip_field(ext: bytes, name: str):
     return at
 
 
+def heal_core_names(payload: bytes):
+    """Undo the damage an editor blind to :attr:`ItemRecord.extra_name` does.
+
+    On a build that has ``extra_name``, writing a title into ``ext[0]`` and a
+    quality into ``ext[1]`` lands on the low two bytes of that FName's length:
+    ``05 00 00 00 "None\0"`` becomes ``<title> <quality> 00 00 "None\0"``.
+    A quality of 3 turns the length into 773, the game reads 773 bytes of name,
+    and nothing after that record lines up -- which is the whole reason such a
+    save will not load.
+
+    The text itself is untouched, so the length can simply be put back.  The
+    two bytes that landed on it are also exactly what the editor meant to
+    write, so they go into the extension at the offsets the game really reads
+    them from rather than being thrown away.  Records the game wrote are not
+    touched: only a length that is broken *and* followed by a literal
+    ``"None"`` *and* shaped like a title/quality pair is healed.
+
+    Returns ``(payload, notes)`` with *payload* unchanged when there is nothing
+    to do.
+    """
+    buf = bytearray(payload)
+    notes: List[str] = []
+    pos = buf.find(TAG_BYTES)
+    while pos >= 0:
+        try:
+            end = _core_end(buf, pos)
+        except (ValueError, struct.error):
+            pos = buf.find(TAG_BYTES, pos + 4)
+            continue
+        if _fstring_len(buf, end) is None and bytes(buf[end + 4:end + 9]) == _EMPTY_NAME:
+            n = struct.unpack_from("<I", buf, end)[0]
+            title, quality = n & 0xFF, (n >> 8) & 0xFF
+            if n >> 16 == 0 and title < len(ITEM_TITLES) and quality <= QUALITY_MAX:
+                struct.pack_into("<I", buf, end, 5)
+                ext = end + 9
+                nxt = buf.find(TAG_BYTES, ext)
+                span = (nxt if nxt >= 0 else len(buf)) - ext
+                if span >= EQUIP_MIN_EXT:
+                    buf[ext], buf[ext + 1] = title, quality
+                notes.append(
+                    "0x%X: name length %d -> 5, title %s, quality %d"
+                    % (pos, n, ITEM_TITLES[title], quality))
+        pos = buf.find(TAG_BYTES, pos + 4)
+    return (bytes(buf) if notes else payload), notes
+
+
 def category_for(item_id: str) -> Optional[int]:
     """The bag the game files *item_id* under, or None if the prefix is new."""
     from . import gear
@@ -219,6 +278,41 @@ def _fstring_len(buf: bytes, i: int) -> Optional[int]:
         if s[-2:] == b"\x00\x00":
             return 4 - 2 * n
     return None
+
+
+def _core_end(buf: bytes, off: int) -> int:
+    """Offset just past ``expired_item_id`` in the record whose tag is at *off*."""
+    i = _skip_fstring(buf, off + 8)          # tag, handle, get_order, item_id
+    i = _skip_fstring(buf, i + 12)           # instance_id, is_favorite, is_presented
+    return _skip_fstring(buf, i)             # aoc_id, then expired_item_id
+
+
+def _has_extra_name(payload: bytes, start: int, probes: int = 32) -> bool:
+    """Whether this build writes :attr:`ItemRecord.extra_name`.
+
+    Asked of the file rather than of a build id, because the only thing that
+    matters is what the bytes say.  The probe reads the head of the first
+    *probes* records -- the consumable bag, whose extension is a bare
+    ``uint16 num`` -- and looks for an FString where the extension would start.
+    Two bytes of quantity followed by the next record's tag never parse as one
+    (the tag puts 0x9D08 in the high half of the length, so it reads as a large
+    negative), while ``"None"`` always does, so the two layouts do not overlap.
+    A single record that disagrees is enough to fall back to the old shape.
+    """
+    pos, tries, hits = start, 0, 0
+    while tries < probes:
+        pos = payload.find(TAG_BYTES, pos)
+        if pos < 0:
+            break
+        try:
+            end = _core_end(payload, pos)
+        except (ValueError, struct.error):
+            pos += 4
+            continue
+        tries += 1
+        hits += _fstring_len(payload, end) is not None
+        pos += 4
+    return tries > 0 and hits == tries
 
 
 def _make_template(ext: bytes):
@@ -263,6 +357,7 @@ class ItemRecord:
     is_presented: int
     aoc_id: str
     expired_item_id: str
+    extra_name: Optional[str] = None   # the third FName newer builds write here
     ext: bytes = b""          # the category extension, carried through verbatim
     array_index: int = 0      # which container this record lives in
     index: int = 0            # position of this record inside that container
@@ -487,15 +582,18 @@ class ItemRecord:
         return PREFIX_LABELS.get(self.item_id[:3], "?")
 
     def pack(self) -> bytes:
-        return b"".join((
+        core = [
             TAG_BYTES,
             struct.pack("<HH", self.handle, self.sort),
             pack_fstring(self.item_id),
             struct.pack("<III", self.instance_id, self.is_favorite, self.is_presented),
             pack_fstring(self.aoc_id),
             pack_fstring(self.expired_item_id),
-            self.ext,
-        ))
+        ]
+        if self.extra_name is not None:
+            core.append(pack_fstring(self.extra_name))
+        core.append(self.ext)
+        return b"".join(core)
 
     def clear(self) -> None:
         """Reset the slot to the exact shape the game writes for a free slot."""
@@ -571,6 +669,7 @@ class ItemSection:
             raise ValueError("no item container tag found in payload")
         start = first - 4
         r = Reader(payload, start)
+        extra = _has_extra_name(payload, start)
         arrays: List[ItemArray] = []
         pending_gap = b""
         while r.pos + 8 <= len(payload):
@@ -593,6 +692,7 @@ class ItemSection:
                 item_id = r.fstring()
                 instance, favorite, presented = r.u32(), r.u32(), r.u32()
                 aoc, expired = r.fstring(), r.fstring()
+                extra_name = r.fstring() if extra else None
                 if tpl is None:
                     tpl = cls._learn(payload, r.pos, count)
                 try:
@@ -606,7 +706,7 @@ class ItemSection:
                 ext = r.bytes(span)
                 arr.records.append(ItemRecord(
                     rec_off, handle, sort, item_id, instance, favorite, presented,
-                    aoc, expired, ext, array_index=arr.index, index=i))
+                    aoc, expired, extra_name, ext, array_index=arr.index, index=i))
             arrays.append(arr)
             # Arrays are not always adjacent; skip to the next tag and keep the
             # bytes in between (including unrelated structs) verbatim.

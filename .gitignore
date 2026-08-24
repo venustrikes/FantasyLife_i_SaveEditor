@@ -19,6 +19,7 @@ LEVEL5 Inc_/
 *.bin
 *.bak
 *.gvas
+*.sav
 
 # --- but the shipped game databases are wanted ---
 !data/fli_text.json.gz

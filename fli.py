@@ -353,9 +353,20 @@ def cmd_set_qty(args):
 
 def cmd_fix_gear(args):
     sf = SaveFile.load(args.save, verify=not args.no_verify)
+    # Overwritten records come first: until their lengths add up again nothing
+    # downstream of the damage can be parsed at all.
+    healed = sf.repair_records(apply=not args.dry_run)
+    if healed:
+        print("healed %d overwritten record(s):" % len(healed))
+        for n in healed:
+            print("  " + n)
+    if healed and args.dry_run:
+        print("\n%d change(s) (dry run)" % len(healed))
+        return
     notes = sf.repair_gear(apply=not args.dry_run)
     for n in notes:
         print("  " + n)
+    notes = healed + notes
     if not notes:
         print("nothing to fix: every piece of gear is in the right bag with a "
               "grade the game has stats for")

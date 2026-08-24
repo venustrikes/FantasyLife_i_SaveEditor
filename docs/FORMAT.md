@@ -163,12 +163,13 @@ uint32  isFavorite                   a bool, serialised as four bytes
 uint32  isPresented                  likewise
 FString aocId                        "None" unless the item came from DLC
 FString expiredItemId                "None"
+FString <unnamed>                    "None"   -- newer builds only, see below
 bytes   ext                          the extension
 ```
 
-An empty stackable slot is 49 bytes. The extension differs per category, which
-is why the editor learns its shape from the array's own records rather than
-assuming one:
+An empty stackable slot is 49 bytes on a build without that third FName and 58
+on one with it. The extension differs per category, which is why the editor
+learns its shape from the array's own records rather than assuming one:
 
 ```
 stackable bags   uint16 num                            the quantity
@@ -207,6 +208,40 @@ the last two fields are version-gated; walk the two arrays and read forwards.
 bytes flat. Reading that byte as an FString length happens to work while it is
 zero, which it is on every empty slot, and then fails on the one record in ten
 that has a real value: 181 of the 4027 equipment records in a complete save.
+
+### The third FName, and the save it bricks
+
+Builds from `2026_0818_1323_rev110414` -- the LEVEL5 sub-header's **version
+10** -- write one more `FName` after `expiredItemId`. It is `"None"` on every
+record of every save seen so far and nothing appears to read it, but it sits
+**in front of** the extension, so every offset in `InventoryInfoEquip` shifts
+by nine bytes. The December 2025 build (version 8) and the June Switch one
+(version 5) do not have it; version 9 is untested.
+
+Missing it is not a cosmetic error. `ext[0]` becomes the low byte of that
+FName's length: writing `itemTitle` there puts a 5 over a 5 and looks fine,
+and then `quality = 3` makes the length **773**. The game reads 773 bytes of
+name, every byte after that record is misaligned, and **the save will not
+load at all** -- twelve such records were enough to strand a real one. Two
+quieter symptoms come from the same slip: every equipment title reads back as
+`Legend`, because it is reading a string length, and stackable gives land at
+quantity 0, because an 11-byte extension is not the 2-byte one a stack has.
+
+The editor tells the two layouts apart from the file, never from a build id.
+`_has_extra_name()` (`hasExtraName()` in the port) reads the head of the first
+records -- the consumable bag, whose extension is a bare `uint16 num` -- and
+asks whether an FString parses where the extension would start. Two bytes of
+quantity followed by the next record's tag never do, because the tag puts
+`0x9D08` in the high half of the length and it reads as a large negative;
+`"None"` always does. The two cases cannot be confused, and one record that
+disagrees is enough to fall back to the old shape.
+
+`heal_core_names()` puts an already-damaged save back. The text was never
+touched, so the length can simply be restored -- and the two bytes that landed
+on it are exactly what the editor meant to write, so they go into the
+extension at the offsets the game really reads. `python fli.py fix-gear <save>`
+runs it, and the browser build offers it on the panel for a save that will not
+parse.
 
 ### ripeningAge is the "1000-year vintage"
 
