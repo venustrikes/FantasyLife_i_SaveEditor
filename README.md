@@ -48,12 +48,10 @@ platform LEVEL5 ships it on — and the name database in `data/` is in fact buil
 straight out of the **Android APK**. So a save pulled off a phone should open,
 edit and re-encrypt exactly like a PC one.
 
-Being straight about it, though: **the Android and iOS releases have not been
-tested end to end.** No edited save has been put back on a phone and confirmed
+**the Android and iOS releases have not been tested end to end.**
+No edited save has been put back on a phone and confirmed
 to load. It should work; it is not proven. If you try it, keep your own copy of
-the original first — the `.bak` the editor writes lands next to the file it
-edited, which is not your phone — and
-[tell me how it went](#help-and-troubleshooting).
+the original first.
 
 ## Quick start
 
@@ -81,29 +79,7 @@ The file dialog starts wherever it finds the newest save, so on Steam you
 should not have to go hunting. Nothing is written until you press **Save**, and
 the previous file is kept as a timestamped `.bak`.
 
-Stuck on any of it? [Help and troubleshooting](#help-and-troubleshooting).
-
-## Where the save lives
-
-| Platform | Path |
-|---|---|
-| Steam | `<game>/Game/Binaries/Win64/SteamData/002DAE74-00-gamedata.bin` |
-| Steam (settings) | `%LOCALAPPDATA%Low\LEVEL5 Inc_\Win64\Users\<id>\Saved\002DAE74-00-systemdata.bin` |
-| Switch | the same two file names inside the dumped save archive |
-| Android | the same two file names in the app's private data — untested, see [Android and iOS](#android-and-ios) |
-| iOS | the same two file names inside an app-container backup — untested |
-
-`gamedata` is the character save — that is the one you want.
-
-A repacked or DRM-free build keeps it inside the game folder instead of in
-Steam's `userdata` — for example:
-
-```
-Documents\Fantasy Life i (2.2.0)\FANTASY LIFE i\Game\Binaries\Win64\SteamData\
-```
-
-The editor looks in both places and starts its file dialog wherever it finds
-the newest save, so you should not have to go hunting.
+For help or any questions, check [Help and troubleshooting](#help-and-troubleshooting).
 
 ## GUI
 
@@ -210,7 +186,7 @@ is a `Get`/`Calc`/`Search` — there is no setter and no field — so it is work
 out from the job states when the save loads. Finishing the jobs is the whole
 edit, and the level follows on its own.
 
-**Ginormosia** (`Map_200000`, *Continente Moltogrande*) keeps its own progress,
+**Ginormosia** (`Map_200000`) keeps its own progress,
 and unlike the boards it really is stored, so it gets written directly:
 
 * **Discover every camp** — adds all ten camps (`map200000_camp_000`..`009`).
@@ -219,21 +195,8 @@ and unlike the boards it really is stored, so it gets written directly:
   cleared. Found and cleared are separate flags and both get set.
 * **Unlock everything** — both at once. No ranks: those are progression and
   stay yours to set.
-
-## The eye towers, and clearing the map
-
-The clouds over the open-world map are the **eye towers** — fifteen of them, one
-per zone, each with its own joke name (*Googlina*, *Googlbert*, … *Googleph*).
-Talking to a tower clears that zone. Nothing else does it: the area ranks, the
-area points and the camps were each tried in game and the fog stayed put.
-
-The **Eye towers** panel is one row. Pick an eye from the **eye** dropdown — it
-lists all fifteen by name and says whether that zone's map area is already
-unlocked — tick or untick **map area unlocked**, and press **Apply to this
-eye**. The tick box always shows what the save currently holds for whichever eye
-is chosen, so you can page through the list to see where you are before changing
-anything. **Unlock every map area** does all fifteen at once and clears the
-whole map.
+* **Eye Towers** — section for the eye towers, it removes the fog that
+  covers the map.
 
 ```
 python fli.py towers <save>                    # what is lit
