@@ -31,6 +31,26 @@ LANGUAGES = ["en", "it", "fr", "de", "es", "ja", "ko", "zh-Hans", "zh-Hant"]
 STACK_FULL = 999                  # what "fill every stack" means
 GREY = "#666666"
 
+# Which containers "Give every ..." can fill: the gear.every() kind each one
+# asks for, and the word for a single one of them.  The four equipment bags
+# take a grade and Super OP with the fill; the rest are bags that stack, whose
+# record is a bare count with nowhere to put either.
+BULK_FILLS = {
+    items.WEAPON: ("weapons", "weapon"),
+    items.LIFE_TOOLS: ("tools", "Life tool"),
+    items.SHIELD: ("shields", "shield"),
+    items.ARMOR: ("armour", "piece of armour"),
+    items.CRAFT: ("crafts", "craft item"),
+    items.MATERIAL: ("materials", "material"),
+    items.RECIPE: ("recipes", "recipe"),
+}
+# Recipes are always 1 in game and equipment has no stack at all, so only the
+# bags that really hold a pile of something start full.
+BULK_FULL_STACK = ("materials", "crafts")
+# The grade dropdown's first row: no single grade at all, but each item spawned
+# at the best one it has stats for, which is what the game itself hands out.
+BULK_BEST_GRADE = "best grade for each item"
+
 SAVE_NAME = "002DAE74-00-gamedata.bin"
 
 # Where a character save turns up.  The plain Steam release keeps it in Steam's
@@ -393,16 +413,58 @@ class App(ttk.Frame):
                    command=self.on_give).pack(side="left", padx=(18, 6))
         ttk.Button(btns, text="Fix gear...",
                    command=self.on_fix_gear).pack(side="right")
-        # Shown only where they mean something -- see sync_bulk_buttons.
+        # Shown only where it means something -- see sync_bulk_buttons.
         self.btn_set_qty = ttk.Button(btns, text="Set every quantity here...",
                                       command=self.on_set_quantities)
-        self.btn_all_materials = ttk.Button(
-            btns, text="Give every material",
-            command=lambda: self.on_give_every("materials"))
-        self.btn_all_recipes = ttk.Button(
-            btns, text="Give every recipe",
-            command=lambda: self.on_give_every("recipes"))
+
+        self._bulk_panel(f, ed)
         return f
+
+    def _bulk_panel(self, parent, above):
+        """The "Give every ..." row, which follows the container dropdown.
+
+        One panel rather than one button per bag: what a bulk fill needs asked
+        differs by bag -- equipment has no stack, so its number is copies of
+        each piece, and it is the only kind with a grade to pick -- and the
+        panel says so on screen instead of behind a dialog.  It is packed
+        *before* the Selected slot frame so it comes out underneath it, and it
+        is off screen entirely on the bags that have no fill.
+        """
+        self.frm_slot = above
+        self._bulk_kind = None
+        self.bulk = ttk.LabelFrame(parent, text="Give every ...", padding=10)
+        row = ttk.Frame(self.bulk)
+        row.pack(fill="x")
+
+        ttk.Label(row, text="how many").pack(side="left")
+        self.spn_bulk_qty = ttk.Spinbox(row, from_=1, to=65535, width=8)
+        self.spn_bulk_qty.pack(side="left", padx=4)
+        self.lbl_bulk_qty = ttk.Label(row, text="of each")
+        self.lbl_bulk_qty.pack(side="left")
+
+        # Packed and unpacked per bag, so they keep this order on the row.
+        self.lbl_bulk_grade = ttk.Label(row, text="grade")
+        self.cmb_bulk_title = ttk.Combobox(row, state="readonly", width=26)
+        self.cmb_bulk_title["values"] = [BULK_BEST_GRADE] + [
+            "%d  %s" % (i, n) for i, n in enumerate(items.ITEM_TITLES)]
+        self.cmb_bulk_title.current(0)
+        self.cmb_bulk_title.bind("<<ComboboxSelected>>",
+                                 lambda _e: self.describe_bulk())
+        self.var_bulk_op = tk.BooleanVar(value=False)
+        self.chk_bulk_op = ttk.Checkbutton(
+            row, text="Super OP Weapon Mode", variable=self.var_bulk_op,
+            command=self.describe_bulk)
+
+        # Right-hand end of the row, like Fix gear... above it: the button
+        # keeps its width whatever the window is narrowed to, and it is the
+        # grade dropdown that gives ground instead of the label saying what
+        # the button does.
+        self.btn_bulk = ttk.Button(row, text="Give every item",
+                                   command=self.on_give_every)
+        self.btn_bulk.pack(side="right")
+        self.lbl_bulk_note = ttk.Label(self.bulk, text="", foreground=GREY,
+                                       wraplength=900, justify="left")
+        self.lbl_bulk_note.pack(anchor="w", pady=(6, 0))
 
     # ---------------------------------------------------------------- lives
     def _tab_lives(self, parent):
@@ -1088,24 +1150,111 @@ class App(ttk.Frame):
             self.cmb_cont.current(keep)
         return names
 
+    def bulk_equipment(self, arr=None) -> bool:
+        """Whether the bag on screen keeps a record per piece rather than a count."""
+        arr = arr or self.cur_array()
+        return bool(arr and arr.records and arr.records[0].equipment)
+
     def sync_bulk_buttons(self):
         """Offer the bulk fills only on the bags they apply to.
 
-        "Give every ..." exists for the two bags whose whole contents are worth
+        "Give every ..." exists for the bags whose whole contents are worth
         having at once, and setting every quantity only means anything where the
         items stack -- equipment has no count, and a number written into one of
         those records lands on its crafting grade instead.
+
+        The panel is only rebuilt when the container changes kind, because
+        every edit refreshes the table and rebuilding it would throw away the
+        quantity and the grade the user had just typed in.
         """
         arr = self.cur_array()
-        index = arr.index if arr else None
         stacks = bool(arr and arr.records and arr.records[0].stackable)
-        for button, show in ((self.btn_all_materials, index == items.MATERIAL),
-                             (self.btn_all_recipes, index == items.RECIPE),
-                             (self.btn_set_qty, stacks)):
-            if show:
-                button.pack(side="left", padx=(0, 6))
-            else:
-                button.pack_forget()
+        if stacks:
+            self.btn_set_qty.pack(side="left", padx=(0, 6))
+        else:
+            self.btn_set_qty.pack_forget()
+
+        fill = BULK_FILLS.get(arr.index) if arr else None
+        if fill is None:
+            self.bulk.pack_forget()
+            self._bulk_kind = None
+            return
+        kind, one = fill
+        if kind != self._bulk_kind:
+            self._bulk_kind = kind
+            equipment = self.bulk_equipment(arr)
+            self.btn_bulk.configure(text="Give every %s" % one)
+            self.lbl_bulk_qty.configure(
+                text="copies of each" if equipment else "of each")
+            self.spn_bulk_qty.delete(0, "end")
+            self.spn_bulk_qty.insert(
+                0, str(STACK_FULL if kind in BULK_FULL_STACK else 1))
+            for w in (self.lbl_bulk_grade, self.cmb_bulk_title, self.chk_bulk_op):
+                w.pack_forget()
+                if equipment:
+                    w.pack(side="left", padx=(12, 0))
+            self.describe_bulk()
+        self.bulk.pack(side="bottom", fill="x", pady=(8, 0), before=self.frm_slot)
+
+    def bulk_title(self):
+        """The grade the fill spawns at, or None for each item's own best."""
+        i = self.cmb_bulk_title.current()
+        return None if i <= 0 else i - 1
+
+    def describe_bulk(self):
+        """Say what the fill will write, the way the Super OP line does."""
+        if self._bulk_kind is None:
+            return
+        if not self.bulk_equipment():
+            self.lbl_bulk_note.configure(
+                text="these stack, so each item lands in one slot holding that "
+                     "many - a record that is only a count has nowhere to keep "
+                     "a grade")
+            return
+        title = self.bulk_title()
+        bits = ["every piece is its own slot, so the number is how many copies "
+                "of each item",
+                "grade: %s" % (items.ITEM_TITLES[title] if title is not None
+                               else "the best one each item has stats for")]
+        if self.var_bulk_op.get():
+            bits.append("a %d-year vintage, top quality and the three skills "
+                        "the Aging Altar rolls for that kind of gear"
+                        % items.OP_RIPENING_AGE)
+        warning = self.grade_note(self._bulk_kind, title)
+        if warning:
+            bits.append(warning)
+        self.lbl_bulk_note.configure(text="  -  ".join(bits))
+
+    def grade_note(self, kind, title) -> str:
+        """What is worth saying about spawning a whole bag at one grade.
+
+        One grade across a bag is this fill's own footgun, and there are two
+        different unknowns behind it.  An item the database *has* a stat list
+        for but no entry at this grade reads as zero in game, which is worth
+        counting.  A bag it has no stat lists for at all -- armour, whose rows
+        the builder cannot pin down -- cannot be checked either way, and saying
+        so is better than saying nothing.  Grade 0 is neither: it has no entry
+        of its own in the lists, which is why the per-item picker leaves it
+        unannotated too.
+        """
+        if not title:
+            return ""
+        sentinel = gear.get().sentinel
+        misses = checked = 0
+        for item_id in gear.every(kind):
+            stat = gear.attack(item_id, title)
+            if stat is None:
+                continue
+            checked += 1
+            misses += stat <= sentinel
+        if not checked:
+            return ("the database has no stat lists for these, so a grade "
+                    "cannot be checked here - untitled is what the game itself "
+                    "writes on them")
+        if misses:
+            return ("careful: %d of them have no stats at that grade and would "
+                    "read as zero" % misses)
+        return ""
 
     def refresh_items(self):
         self.refresh_containers()
@@ -1464,28 +1613,43 @@ class App(ttk.Frame):
             self.touch("%d stack(s) in %s set to %d" % (n, arr.label, amount))
         self.guard(go)
 
-    def on_give_every(self, kind):
-        """Give one of every material or recipe the game defines."""
+    def on_give_every(self):
+        """Fill the container on screen with every item the game keeps in it."""
         def go():
             sf = self.need()
-            amount = 1
-            if kind == "materials":
-                amount = simpledialog.askinteger(
-                    "Give every material", "How many of each?",
-                    initialvalue=STACK_FULL, minvalue=1, maxvalue=65535,
-                    parent=self.master)
-                if amount is None:
-                    return
+            arr = self.cur_array()
+            fill = BULK_FILLS.get(arr.index) if arr else None
+            if fill is None:
+                raise RuntimeError("this container has no bulk fill")
+            kind = fill[0]
+            equipment = self.bulk_equipment(arr)
+            amount = max(1, as_int(self.spn_bulk_qty.get(), 1))
+            title = self.bulk_title() if equipment else None
+            super_op = equipment and bool(self.var_bulk_op.get())
+
+            # Equipment does not stack, so asking for copies of each can want
+            # more slots than the bag has -- and what does not fit is dropped in
+            # id order, which would quietly leave out everything near the end.
+            want = len(gear.every(kind)) * (amount if equipment else 1)
+            room = arr.count - arr.used
+            if want > room and not messagebox.askokcancel(
+                    APP, "That asks for about %d slot(s) in %s, which has %d "
+                         "free.\n\nFill it as far as it goes?"
+                         % (want, arr.label, room)):
+                return
             self.master.config(cursor="watch")
             self.master.update_idletasks()
             try:
-                got = sf.give_every(kind, amount)
+                got = sf.give_every(kind, amount, title=title,
+                                    super_op=super_op)
             finally:
                 self.master.config(cursor="")
             self.cmb_cont.current(got["container"])
             self.refresh_items()
-            note = "%d added, %d topped up, of %d %s" % (
-                got["added"], got["topped_up"], got["total"], kind)
+            done = ("regraded" if equipment and (title is not None or super_op)
+                    else "topped up")
+            note = "%d added, %d %s, of %d %s" % (
+                got["added"], got["topped_up"], done, got["total"], kind)
             if got["no_room"]:
                 note += "  -  %d did not fit" % got["no_room"]
             self.touch(note)

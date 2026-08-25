@@ -21,7 +21,10 @@ Four things live here that the save format alone cannot tell you:
   category from armour, and an item dropped in the wrong bag never shows up.
 
 * **every material and recipe id**, for the bulk fills.  The name database is
-  keyed by things that have a name, and recipes have none.
+  keyed by things that have a name, and recipes have none.  The other bags a
+  bulk fill can reach -- weapons, Life tools, shields, armour, craft items --
+  have no list here and are read off the name database instead; see
+  :data:`EVERY_KINDS`.
 """
 from __future__ import annotations
 
@@ -36,8 +39,29 @@ DATA_FILE = (os.environ.get("FLI_GEAR_DB")
              or os.path.join(_ROOT, "data", "fli_gear.json.gz"))
 
 TITLES = ["None", "Rag", "Normal", "Masterpiece", "Supreme", "Legend"]
-_MATERIAL_ID = re.compile(r"^imt\d{6,}$")
 SENTINEL = 1                  # "this item does not exist at this grade"
+
+# What a bulk fill is made of, one entry per bag worth filling.  Materials and
+# recipes come out of the shipped database, which was built from the game's own
+# item tables.  Nothing built a list for the equipment bags or the craft bag, so
+# those ids come from the *name* database instead: it is keyed by everything the
+# game has a word for, and an item with no name is a table row a player can
+# never see, which makes it both the widest list available without the pak and
+# the safest one to drop into a save.
+EVERY_KINDS = ("materials", "recipes", "weapons", "tools", "shields",
+               "armour", "crafts")
+_EVERY_ALIAS = {"armor": "armour", "craft": "crafts", "life tools": "tools"}
+
+# The id prefixes each kind is made of.  ``iam`` appears twice because the game
+# splits it across two bags, and :meth:`GearDB.every` splits it the same way.
+_EVERY_PREFIXES = {
+    "materials": ("imt",),
+    "weapons": ("iwp",),
+    "tools": ("ilt",),
+    "shields": ("iam",),
+    "armour": ("iam",),
+    "crafts": ("icf", "ico"),
+}
 
 # The shipped database is the source of truth; this is what it held when the
 # module was written, so the shield bag is still picked correctly when the
@@ -68,6 +92,9 @@ class GearDB:
         self.shields = frozenset(payload.get("shields") or _FALLBACK_SHIELDS)
         self.materials: List[str] = payload.get("materials") or []
         self.recipes: List[str] = payload.get("recipes") or []
+        # every() answers the same question for a whole bag at a time, and the
+        # derived lists cost a scan of the name database, so they are kept.
+        self._every: Dict[str, List[str]] = {}
 
     # --------------------------------------------------------------- lookups
     def stats(self, item_id: str) -> Optional[dict]:
@@ -128,24 +155,63 @@ class GearDB:
         """
         return list(self.op.get(item_id) or ())
 
-    def every(self, kind: str) -> List[str]:
-        """Every id of one kind: "materials" or "recipes".
+    def named_ids(self, prefixes) -> List[str]:
+        """Every id the *fallback* language names, whose prefix is in *prefixes*.
 
-        Materials fall back to the name database, which knows all but the
-        handful of unnamed ones, so the bulk fill still works without this file.
+        One language rather than the union of all nine, and that language is
+        :data:`flisave.names.FALLBACK` -- the one the game itself falls back to
+        and the only one the browser build is guaranteed to have loaded, so
+        both editors derive the same list from the same table.  It is also the
+        better data: the rows English leaves out are the untranslated
+        placeholders, ``ico01070200`` and ``ico01080200`` being two prison
+        tiles the Japanese table still marks ``(仮)`` -- provisional.
+
+        Empty when there is no name database, which is what makes the callers
+        below fall back rather than answer with a short list.
         """
-        if kind == "materials":
-            if self.materials:
-                return list(self.materials)
-            from . import names as _names
-            db = _names.get()
-            found = set()
-            for table in db.names.values():
-                found.update(k for k in table if _MATERIAL_ID.match(k))
-            return sorted(found)
+        from . import names as _names
+        want = re.compile(r"^(%s)\d{6,}$" % "|".join(prefixes))
+        table = _names.get().names.get(_names.FALLBACK) or {}
+        return sorted(k for k in table if want.match(k))
+
+    def every(self, kind: str) -> List[str]:
+        """Every id of one kind, for the bulk fills -- see :data:`EVERY_KINDS`.
+
+        Materials and recipes come from this database, built from the game's own
+        item tables.  It carries no list for the equipment bags or the craft
+        bag, so those are read off the name database and ``iam`` is split into
+        shields and armour the way the game splits the two bags -- an armour id
+        dropped in the shield bag never appears in game.  Weapons and Life tools
+        fall back to the stat lists here when there is no name database at all,
+        and materials to the ids the name database knows.
+        """
+        kind = _EVERY_ALIAS.get(kind, kind)
+        if kind not in EVERY_KINDS:
+            raise KeyError("no such id list: %r" % kind)
+        found = self._every.get(kind)
+        if found is None:
+            found = self._build_every(kind)
+            # An empty answer means a database that has not loaded rather than
+            # a kind with nothing in it, so it is not worth remembering.
+            if found:
+                self._every[kind] = found
+        return list(found)
+
+    def _build_every(self, kind: str) -> List[str]:
         if kind == "recipes":
-            return list(self.recipes)
-        raise KeyError("no such id list: %r" % kind)
+            return list(self.recipes)     # recipes have no name to fall back on
+        if kind == "materials" and self.materials:
+            return list(self.materials)
+        found = self.named_ids(_EVERY_PREFIXES[kind])
+        if kind == "shields":
+            return [i for i in found if self.is_shield(i)] or sorted(self.shields)
+        if kind == "armour":
+            return [i for i in found if not self.is_shield(i)]
+        if not found and kind == "weapons":
+            return sorted(k for k in self.weapons if not self.is_tool(k))
+        if not found and kind == "tools":
+            return sorted(self.tools)
+        return found
 
 
 _cache: Optional[GearDB] = None

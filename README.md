@@ -104,7 +104,10 @@ python fli_gui.py path\to\002DAE74-00-gamedata.bin
   [Super OP Weapon Mode](#super-op-weapon-mode).
   **Add to first free slot** files it in the container the game itself uses,
   following the view there. **Fix gear...** repairs pieces spawned before the
-  editor understood any of this.
+  editor understood any of this. Underneath, a **Give every ...** panel fills
+  the whole bag — every weapon, Life tool, shield, piece of armour, craft item,
+  material or recipe the game defines, at a grade and with Super OP where those
+  apply; see [Bulk fills](#bulk-fills).
 * **Lives** — level, EXP, rank and PA (the ability points a Life spends on its
   abilities) for all fourteen Lives, each with its emblem. Rank is a dropdown
   of the game's own rank names. Apply to one Life or to every Life at once.
@@ -136,6 +139,9 @@ python fli.py give       <save> --id iwp02000220 [--title 5]   # a weapon
 python fli.py give       <save> --id ilt01000120 --super-op   # ...fully aged
 python fli.py give-all   <save> --what materials --qty 999
 python fli.py give-all   <save> --what recipes
+python fli.py give-all   <save> --what crafts --qty 999
+python fli.py give-all   <save> --what weapons --title 5 --super-op
+python fli.py give-all   <save> --what armour --qty 2   # two of each piece
 python fli.py set-qty    <save> --container 7 --qty 999
 python fli.py set-slot   <save> --slot 0:12 --id iwp01000010 --qty 1
 python fli.py fix-gear   <save> [--dry-run]              # repair spawned gear
@@ -307,29 +313,63 @@ folder; with the folder missing the editor falls back to text.
 
 ## Bulk fills
 
-Two bags are worth having in full, and the editor knows every id in each
-because `data/fli_gear.json.gz` carries the lists straight from the game's own
-tables — the name database cannot supply them, since it is keyed by things that
-have a name and recipes have none.
+Seven bags are worth having in full, and the editor knows every id in each.
+Materials and recipes come out of `data/fli_gear.json.gz`, built from the
+game’s own item tables — the name database cannot supply those, since it is
+keyed by things that have a name and recipes have none. Nothing built a list
+for the four equipment bags or the craft bag, so those ids are read off the
+name database instead, which is the safe direction: an item the game has no
+word for is a table row a player never sees.
 
-| Bag | Ids | Slots |
-|---|---|---|
-| Materials | 486, from `GDSItemMaterialData` | 999 |
-| Recipes | 2 011, from `GDSItemRecipeData` | 2 048 |
+| Bag | Ids | Where the list comes from | Slots |
+|---|---|---|---|
+| Weapons | 117 | `iwp` ids the game names | 1 099 |
+| Life tools | 140 | `ilt` ids the game names | 1 099 |
+| Shields | 19 | the `iam` ids the gear database marks as shields | 400 |
+| Armour | 641 | every other named `iam` id | 1 099 |
+| Craft items | 863 | `icf` + `ico` ids the game names | 2 048 |
+| Materials | 486 | `GDSItemMaterialData` | 999 |
+| Recipes | 2 011 | `GDSItemRecipeData` | 2 048 |
 
-Both fit with room to spare. The blank placeholder rows the tables carry
-(`irp00000000` and friends) are left out, and a real 100 % save was checked
-against both lists: every id it holds is in them.
+Every list fits its bag with room to spare. The blank placeholder rows the
+tables carry (`irp00000000` and friends) are left out, and so are the unnamed
+`iwp00000000` / `ilt00000000` / `iam00000007` slots the game itself parks in a
+bag to mean “nothing equipped” — filling those would hand you a row of items
+with no name.
+
+The list is keyed on the ids **English** names, not on the union of all nine
+languages, for two reasons. It is the table the browser build is guaranteed to
+have loaded, so both editors derive the same list and the parity test can hold
+them to it byte for byte. And it is the better data: the only rows English
+leaves out are untranslated placeholders — `ico01070200` and `ico01080200` are
+two prison tiles the Japanese table still marks `(仮)`, *provisional*.
+
+**Equipment has no stack.** Every piece is its own record, so on the four
+equipment bags the quantity is *how many copies of each item* rather than a
+stack size, and the fill takes a **grade** and the **Super OP Weapon Mode**
+tick box with it. The grade dropdown leads with *best grade for each item*,
+which is the right answer for a whole bag at once: one grade across 117
+different weapons leaves 68 of them reading zero, and the panel says how many
+as soon as you pick one. Craft items, materials and recipes stack, so they take
+only a number — a record that is nothing but a count has nowhere to keep a
+grade.
 
 ```
 python fli.py give-all <save> --what materials --qty 999
 python fli.py give-all <save> --what recipes
+python fli.py give-all <save> --what crafts --qty 999
+python fli.py give-all <save> --what weapons --title 5 --super-op
+python fli.py give-all <save> --what armour --qty 2
 python fli.py set-qty  <save> --container 7 --qty 999
 ```
 
-In the GUI, **Give every material** appears only on the materials bag and
-**Give every recipe** only on the recipes bag. Running either again tops up what
-is already there instead of adding a second copy, so it is safe to repeat.
+In the GUI a **Give every ...** panel sits under the slot editor and follows
+the container dropdown: it names the bag on screen, is off screen entirely on
+the bags with no fill, and only shows the grade and the tick box where they
+mean something. Running it again tops up what is already there instead of
+adding a second copy, so it is safe to repeat — and if you asked for a grade or
+for Super OP, the pieces already in the bag are brought up to it rather than
+being left behind at their old one.
 
 **Set every quantity here...** appears on any bag whose items stack, and asks
 for the number. It skips equipment on purpose: a piece of gear has no quantity,

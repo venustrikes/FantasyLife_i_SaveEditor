@@ -14,7 +14,9 @@
     python fli.py give       <save> --id iwp02000220 [--title 5]
     python fli.py give       <save> --id ilt01000120 --super-op
     python fli.py set-slot   <save> --slot 0:12 --id iwp01000010 --qty 1 [-o out]
-    python fli.py give-all   <save> --what materials|recipes [--qty N]
+    python fli.py give-all   <save> --what materials|recipes|crafts [--qty N]
+    python fli.py give-all   <save> --what weapons|tools|shields|armour
+                             [--qty copies] [--title 5] [--super-op]
     python fli.py set-qty    <save> --container 7 --qty 999
     python fli.py fix-gear   <save> [--dry-run]
     python fli.py clear-slot <save> --slot 0:12 [-o out]
@@ -331,11 +333,20 @@ def cmd_set_slot(args):
 
 def cmd_give_all(args):
     sf = SaveFile.load(args.save, verify=not args.no_verify)
-    got = sf.give_every(args.what, args.qty)
+    got = sf.give_every(args.what, args.qty, title=args.title,
+                        super_op=args.super_op)
     bag = sf.items.arrays[got["container"]]
     print("%s -> [%d] %s: %d added, %d topped up, of %d"
           % (args.what, got["container"], bag.label,
              got["added"], got["topped_up"], got["total"]))
+    if bag.records and bag.records[0].equipment:
+        # Equipment has no stack, so the quantity was copies of each piece and
+        # the grade is what decides whether any of them read as more than zero.
+        print("  %d piece(s) of each, at %s%s"
+              % (max(1, args.qty),
+                 items.ITEM_TITLES[args.title] if args.title is not None
+                 else "the best grade each item has stats for",
+                 ", aged %d years" % items.OP_RIPENING_AGE if args.super_op else ""))
     if got["no_room"]:
         print("  %d did not fit -- the bag holds %d" % (got["no_room"], bag.count))
     print("  bag now %d/%d used" % (bag.used, bag.count))
@@ -589,12 +600,17 @@ def main(argv=None):
     s.add_argument("-o", "--out")
     s.set_defaults(f=cmd_set_slot)
 
-    s = sub.add_parser("give-all", help="give one of every material or recipe "
-                       "the game defines")
+    s = sub.add_parser("give-all", help="give every item of one kind the game "
+                       "defines: a whole bag at once")
     s.add_argument("save")
-    s.add_argument("--what", choices=("materials", "recipes"), required=True)
+    s.add_argument("--what", choices=gear.EVERY_KINDS, required=True)
     s.add_argument("--qty", type=int, default=1,
-                   help="how many of each (recipes are always 1 in game)")
+                   help="how many of each -- the stack size in a bag that "
+                        "stacks (recipes are always 1 in game), and how many "
+                        "separate pieces in an equipment bag, which has no "
+                        "stack at all")
+    s.add_argument("--title", type=int, choices=range(6), help=_TITLE_HELP)
+    s.add_argument("--super-op", action="store_true", help=_OP_HELP)
     s.add_argument("-o", "--out")
     s.set_defaults(f=cmd_give_all)
 

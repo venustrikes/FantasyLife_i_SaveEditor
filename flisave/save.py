@@ -238,12 +238,29 @@ class SaveFile:
         rec.place(item_id, quantity, sec.next_instance_id(), title, super_op)
         return rec
 
-    def give_every(self, kind: str, quantity: int = 1) -> dict:
-        """Put one of every material or recipe in the game into its bag.
+    def give_every(self, kind: str, quantity: int = 1, *,
+                   title: Optional[int] = None, super_op: bool = False) -> dict:
+        """Put every item of one *kind* into the bag the game keeps it in.
 
-        Anything already there is topped up rather than duplicated, so running
-        it twice does not fill the bag with a second copy of everything.
-        Returns ``{"added", "topped_up", "no_room", "total"}``.
+        *kind* is one of :data:`flisave.gear.EVERY_KINDS`.  What *quantity*
+        means depends on the bag, because the two shapes of record count
+        differently: a stackable bag (materials, recipes, craft items) gets one
+        record per id holding *quantity* of it, while equipment has no count at
+        all -- every piece is its own record -- so there *quantity* is how many
+        separate pieces of each item to leave in the bag.
+
+        *title* is the grade each new piece is spawned at, or None for the best
+        grade the item has stats for; *super_op* finishes it the way the Aging
+        Altar does.  Both are ignored by a stackable bag, which has neither
+        field.
+
+        Running it twice does not fill the bag with a second copy of
+        everything: a bag that already holds enough of an id is left alone.
+        Asking for a *title* or for *super_op* does re-grade the pieces already
+        there, since that is the state the caller just asked every one of them
+        to be in.
+
+        Returns ``{"added", "topped_up", "no_room", "total", "container"}``.
         """
         from . import gear as _gear
         sec = self.items
@@ -251,31 +268,55 @@ class SaveFile:
             raise RuntimeError("item section unavailable: %s" % self._items_error)
         every = _gear.every(kind)
         if not every:
+            # Which database is missing depends on the kind: materials and
+            # recipes come from the gear database, the rest from the names.
             raise RuntimeError(
-                "the item database has no %s list; rebuild it with "
-                "tools/build_geardb.py" % kind)
+                "no %s list to fill from -- rebuild the databases with "
+                "tools/build_textdb.py and tools/build_geardb.py" % kind)
 
         index = _items_category(every[0])
         if index is None or index >= len(sec.arrays):
             raise RuntimeError("no bag holds %r items" % every[0][:3])
         bag = sec.arrays[index]
-        here = {r.item_id: r for r in bag.records if not r.empty}
+        quantity = max(1, int(quantity))
+        equipment = bool(bag.records) and bag.records[0].equipment
+        here: dict = {}
+        for rec in bag.records:
+            if not rec.empty:
+                here.setdefault(rec.item_id, []).append(rec)
+
+        # Both of these are walked once rather than re-derived per placement:
+        # ``first_empty`` and ``next_instance_id`` each scan the whole section,
+        # and a fill of two thousand ids calls them two thousand times.  The
+        # ids handed out are the same ones the repeated scan would produce.
+        free = (r for r in bag.records if r.empty)
+        instance = sec.next_instance_id()
 
         added = topped = no_room = 0
         for item_id in every:
-            rec = here.get(item_id)
-            if rec is not None:
-                if rec.quantity < quantity:
-                    rec.quantity = quantity
+            have = here.get(item_id) or []
+            if equipment:
+                if title is not None or super_op:
+                    for rec in have:
+                        if title is not None:
+                            rec.item_title = title
+                        if super_op:
+                            rec.make_super_op(keep_title=title is not None)
+                        topped += 1
+                want = quantity - len(have)
+            else:
+                if have and have[0].quantity < quantity:
+                    have[0].quantity = quantity
                     topped += 1
-                continue
-            free = sec.first_empty(index)
-            if free is None:
-                no_room += 1
-                continue
-            free.place(item_id, quantity, sec.next_instance_id())
-            here[item_id] = free
-            added += 1
+                want = 0 if have else 1
+            for _ in range(want):
+                rec = next(free, None)
+                if rec is None:
+                    no_room += 1
+                    continue
+                rec.place(item_id, quantity, instance, title, super_op)
+                instance += 1
+                added += 1
         return {"added": added, "topped_up": topped, "no_room": no_room,
                 "total": len(every), "container": index}
 
