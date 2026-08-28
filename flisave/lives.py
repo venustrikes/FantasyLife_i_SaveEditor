@@ -4,7 +4,7 @@ The payload holds several arrays keyed by the Life ids ``life0000``..``life0014`
 Each is ``uint32 count`` followed by ``count`` entries of
 ``FString life_id`` + a fixed-size body.  Bodies seen so far:
 
-    9  bytes  uint32 rank, uint8 unk, uint32 pa
+    9  bytes  uint8 rank, uint16 rank_points, uint8 ?, uint8 flag, uint32 pa
     2  bytes  uint16 level
     4  bytes  uint32 experience
     40 bytes  10 x (uint16 item_handle, uint16 item_sort)   equipment loadout
@@ -19,6 +19,36 @@ keeps working when the payload shifts (for example after item edits).
 not been started), 1 "Novice", 2 "Fledgling".  Both were confirmed against a
 live save (Paladin: rank 2 = Fledgling in game, level 10, 40 PA), and ``raw`` is
 always available so nothing is hidden behind a guess.
+
+**``rank`` is one byte, not four (corrected 2026-08-28).**  Reading it as a
+uint32 works only while the two bytes above it are zero, which they are on a
+Life whose rank quests have never been touched -- every save this editor was
+built against.  They are ``rank_points``: what the Life master's quests award
+towards the next rank.  A save with a rank 3 Blacksmith carrying 100 points
+read as rank **25603** (``0x6403``), and writing a rank through the old
+uint32 field zeroed the points.  Confirmed against the game's own Life cards:
+that save shows *Fabbro, Apprendista, Liv. 7* for stored rank 3, and its
+Paladin *Principiante, Liv. 15* for stored rank 2, with every other Life's rank
+and level matching too.
+
+The star total the Life card prints next to the rank (400 on that Paladin, 2200
+on that Blacksmith) is **not in the save**: neither number occurs anywhere in
+the payload as a uint16 or a uint32, so like a bulletin board's level it is
+worked out at load rather than stored.  *What* it counts is still open -- it is
+either what the next rank costs, looked up by rank (``nextLifeRank``,
+``_lifeRankInfoList``), or the Life's own accumulated stars summed from its
+finished ``qsa_life*`` quests.  The save cannot tell the two apart: that
+Blacksmith is the only Life far enough along to distinguish them.  Checking is
+one glance at a second rank-2 Life's card in game -- if Miner and Carpenter also
+read 400, it is the rank's price; if they read less than the Paladin, it is a
+personal total.
+
+``rank_points`` is progress that survives neither reading being settled: it is
+100 on that Blacksmith, 0 on every Life that has not finished a rank quest since
+its last rank-up.
+
+The byte at offset 3 is zero on every Life of every save seen and has no name
+yet, so it is read but never written.
 """
 from __future__ import annotations
 
@@ -51,8 +81,10 @@ LIFE_NAMES = {
 
 # body size -> (array role, [(field name, offset, struct code)])
 BODY_LAYOUTS: Dict[int, tuple] = {
-    9: ("rank / PA", [("rank", 0, "<I"), ("flag", 4, "<B"),
-                      ("pa", 5, "<I")]),
+    # rank is one byte: the two above it are the points its quests award, and
+    # a uint32 here reads them as part of the rank and wipes them on write.
+    9: ("rank / PA", [("rank", 0, "<B"), ("rank_points", 1, "<H"),
+                      ("flag", 4, "<B"), ("pa", 5, "<I")]),
     2: ("level", [("level", 0, "<H")]),
     4: ("experience", [("exp", 0, "<I")]),
     40: ("equipment (10 slots)", []),
@@ -176,7 +208,7 @@ class LifeSection:
             out.append("  0x%07X  count=%d body=%dB  %s"
                        % (a.offset, a.count, a.body_size, a.role))
         rows = self.table(payload)
-        keys = [k for k in ("rank", "flag", "pa", "level", "exp")
+        keys = [k for k in ("rank", "rank_points", "flag", "pa", "level", "exp")
                 if any(k in r for r in rows)]
         if keys:
             out.append("")

@@ -111,13 +111,13 @@ def cmd_ids(args):
 def cmd_lives(args):
     sf = SaveFile.load(args.save, verify=not args.no_verify)
     rows = sf.life_rows(args.lang)
-    print("%-10s %-14s %6s %-12s %8s %10s %9s"
-          % ("id", "life", "rank", "rank name", "level", "exp", "PA"))
+    head = "%-10s %-14s %5s %-12s %7s %7s %9s %8s"
+    print(head % ("id", "life", "rank", "rank name", "points", "level", "exp", "PA"))
     for r in rows:
-        print("%-10s %-14s %6s %-12s %8s %10s %9s"
+        print(head
               % (r["life_id"], r.get("name", "?"), r.get("rank", "-"),
-                 r.get("rank_name", ""), r.get("level", "-"), r.get("exp", "-"),
-                 r.get("pa", "-")))
+                 r.get("rank_name", ""), r.get("rank_points", "-"),
+                 r.get("level", "-"), r.get("exp", "-"), r.get("pa", "-")))
     print()
     print(sf.lives.summary(bytes(sf.payload)).split("\n\n")[0])
 
@@ -300,7 +300,8 @@ def cmd_set_life(args):
         targets = [args.life]
     for life in targets:
         for field, value in (("level", args.level), ("exp", args.exp),
-                             ("rank", args.rank), ("pa", args.pa)):
+                             ("rank", args.rank), ("pa", args.pa),
+                             ("rank_points", args.rank_points)):
             if value is not None:
                 sf.set_life_field(life, field, value)
                 print("%s.%s = %d" % (life, field, value))
@@ -620,6 +621,9 @@ def main(argv=None):
     s.add_argument("--level", type=int)
     s.add_argument("--exp", type=int)
     s.add_argument("--rank", type=int)
+    s.add_argument("--rank-points", type=int,
+                   help="progress towards the next rank, which is what the "
+                        "Life master's quests award")
     s.add_argument("--pa", type=int, help="ability points for the Life")
     s.add_argument("-o", "--out")
     s.set_defaults(f=cmd_set_life)

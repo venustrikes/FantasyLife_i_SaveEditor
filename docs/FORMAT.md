@@ -321,7 +321,7 @@ Five arrays keyed by `life0000`..`life0014` (15 entries each: index 0 is the
 
 | Body | Fields | Sample save (`life0001`) |
 |---|---|---|
-| 9 B | `uint32 rank`, `uint8 flag`, `uint32 pa` | 2, 0, 40 |
+| 9 B | `uint8 rank`, `uint16 rank_points`, `uint8 ?`, `uint8 flag`, `uint32 pa` | 2, 0, 0, 0, 40 |
 | 2 B | `uint16 level` | 10 |
 | 4 B | `uint32 exp` | 245 |
 | 40 B | 10 × (`uint16 item_handle`, `uint16 item_sort`) | equipment loadout |
@@ -340,6 +340,47 @@ Paladin showed 40 PA in game reads 40 here.
 ("None", the Life has not been started), 1 → "Novice", 2 → "Fledgling", and so
 on to 7 → "Hero". A live save holding `rank = 2` shows *Principiante* in game,
 the Italian for Fledgling.
+
+**`rank` is one byte, not four** (corrected 2026-08-28). Reading it as a
+`uint32` works only while the two bytes above it are zero, which they are on
+any Life whose rank quests have never been touched — every save this editor was
+first built against. They are `rank_points`: what a Life master's quests award
+towards the next rank. A save with a rank 3 Blacksmith carrying 100 points read
+as rank **25603** (`0x6403`), and writing a rank through the old `uint32` field
+zeroed the points.
+
+Both readings were checked against the game's own Life cards on that save:
+
+| Life | Stored | Card |
+|---|---|---|
+| `life0001` Paladin | rank 2, 0 points, level 15 | *Paladino — Principiante, Liv. 15* |
+| `life0010` Blacksmith | rank 3, 100 points, level 7 | *Fabbro — Apprendista, Liv. 7* |
+| `life0006` Woodcutter | rank 2, level 17 | *Taglialegna — Principiante, Liv. 17* |
+
+**The star total the card prints next to the rank is not in the save.** That
+Paladin card reads ★400 and the Blacksmith ★2200, and neither number occurs
+anywhere in the 8 MB payload as a `uint16` or as a `uint32` — every hit for
+either is inside an item record, a `land_obj` or the GVAS header. So, like a
+bulletin board's level (§8), it is worked out at load rather than stored.
+
+*What* it counts is still open, and this save cannot settle it:
+
+* it may be **what the next rank costs**, looked up by rank — the executable has
+  `nextLifeRank`, `_lifeRankInfoList` and `InitLifeRankInfo`; or
+* it may be the **Life's own accumulated stars**, summed from its finished
+  `qsa_life*` quests the way the board level is summed from `qsd_*` ones.
+
+Both fit the two cards seen. The Blacksmith is the only Life in that save far
+enough along to tell them apart, and one glance at a second rank-2 Life settles
+it: if Miner and Carpenter also read ★400 it is the rank's price, and if they
+read less than the Paladin's 400 it is a personal total.
+
+`rank_points` is unaffected either way — it is 100 on that Blacksmith, whose six
+`qsa_life10_*` quests are finished, and 0 on every Life that has not finished a
+rank quest since its last rank-up.
+
+The byte at offset 3 is zero on every Life of every save seen and has no name
+yet, so the editor reads it and never writes it.
 
 ### Recipes are two things, and a bench reads the other one
 

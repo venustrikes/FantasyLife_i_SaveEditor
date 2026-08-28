@@ -479,12 +479,12 @@ class App(ttk.Frame):
 
         mid = ttk.Frame(f)
         mid.pack(fill="both", expand=True, pady=8)
-        cols = ("rank", "rank name", "level", "exp", "PA")
+        cols = ("rank", "rank name", "points", "level", "exp", "PA")
         self.tree_life = ttk.Treeview(mid, columns=cols, show="tree headings",
                                       height=15)
         self.tree_life.heading("#0", text="Life")
-        self.tree_life.column("#0", width=260)
-        for c, w in zip(cols, (60, 150, 80, 110, 80)):
+        self.tree_life.column("#0", width=240)
+        for c, w in zip(cols, (55, 130, 70, 70, 100, 70)):
             self.tree_life.heading(c, text=c)
             self.tree_life.column(c, width=w, anchor="w")
         sb = ttk.Scrollbar(mid, orient="vertical", command=self.tree_life.yview)
@@ -505,11 +505,18 @@ class App(ttk.Frame):
         ttk.Label(ed, text="rank").grid(row=0, column=6, padx=(14, 3))
         self.cmb_rank = ttk.Combobox(ed, state="readonly", width=18)
         self.cmb_rank.grid(row=0, column=7)
+        # The points the Life master's quests award towards the next rank.  They
+        # live in the two bytes above the rank, so they get a box of their own
+        # rather than being carried along silently by a rank write.
+        ttk.Label(ed, text="points").grid(row=0, column=8, padx=(14, 3))
+        e = ttk.Entry(ed, width=8)
+        e.grid(row=0, column=9)
+        self.life_entries["rank_points"] = e
         ttk.Button(ed, text="Apply to this Life",
                    command=lambda: self.on_apply_life(False)
-                   ).grid(row=0, column=8, padx=(18, 6))
+                   ).grid(row=0, column=10, padx=(18, 6))
         ttk.Button(ed, text="Apply to every Life",
-                   command=lambda: self.on_apply_life(True)).grid(row=0, column=9)
+                   command=lambda: self.on_apply_life(True)).grid(row=0, column=11)
 
         self._recipe_panel(f, ed)
         return f
@@ -547,8 +554,11 @@ class App(ttk.Frame):
         ttk.Button(row, text="Apply to this Life",
                    command=lambda: self.on_apply_recipes(False)
                    ).pack(side="right", padx=6)
+        # The panel is the full width of the tab; wrapping at 900 pushed this
+        # note to three lines on a save with longer counts in it and took the
+        # tab past the height the window opens at.
         self.lbl_recipe = ttk.Label(self.frm_recipes, text="", foreground=GREY,
-                                    wraplength=900, justify="left")
+                                    wraplength=1080, justify="left")
         self.lbl_recipe.pack(anchor="w", pady=(6, 0))
         self.frm_recipes.pack(side="bottom", fill="x", pady=(8, 0), before=above)
 
@@ -1357,7 +1367,8 @@ class App(ttk.Frame):
                 text="  " + (r.get("name") or r["life_id"]),
                 image=self.icons.life(r["life_id"], iconset.SMALL) or "",
                 values=(r.get("rank", "-"), r.get("rank_name", ""),
-                        r.get("level", "-"), r.get("exp", "-"), r.get("pa", "-")))
+                        r.get("rank_points", "-"), r.get("level", "-"),
+                        r.get("exp", "-"), r.get("pa", "-")))
         self.refresh_recipes()
 
     def refresh_recipes(self):
@@ -1787,8 +1798,9 @@ class App(ttk.Frame):
         if not sel:
             return
         vals = self.tree_life.item(sel[0], "values")
-        rank, _rank_name, level, exp, pa = vals
-        for key, value in (("level", level), ("exp", exp), ("pa", pa)):
+        rank, _rank_name, points, level, exp, pa = vals
+        for key, value in (("level", level), ("exp", exp), ("pa", pa),
+                           ("rank_points", points)):
             self.life_entries[key].delete(0, "end")
             self.life_entries[key].insert(0, str(value))
         try:
