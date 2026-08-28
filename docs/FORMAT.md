@@ -114,7 +114,7 @@ is a flat little-endian sequence of primitives with UE `FString`s
 | `0x0F7FDE`–`0x0F8A80` | **character block**: avatar params, HP/MaxHP/SP/MaxSP, name, current Life, the per-Life arrays, equipped models |
 | `0x0FB1C0`–`0x190B20` | world object state (`land_obj*`, `water_obj*`, `Connect_All*`) — the bulk of the file |
 | `0x6A0000`–`0x780000` | map gathering points (`grp_wood_*`, `pick_map_fish_*`, …) |
-| `0x788F5F`–`0x799000` | recipes (`recipe_life*`) |
+| `0x788F57`–`0x798FEE` | **which recipes are known** (`recipe_life*`, magic `0x31CCCDDC`) — see §5 |
 | `0x79A223`+ | shops, shrines, NPC data |
 
 ## 4. Item containers
@@ -340,6 +340,58 @@ Paladin showed 40 PA in game reads 40 here.
 ("None", the Life has not been started), 1 → "Novice", 2 → "Fledgling", and so
 on to 7 → "Hero". A live save holding `rank = 2` shows *Principiante* in game,
 the Italian for Fledgling.
+
+### Recipes are two things, and a bench reads the other one
+
+A recipe is stored twice, and an editor that writes only one half produces a
+save where every recipe shows in the smartphone's recipe app and a crafting
+bench still lists almost nothing:
+
+1. an `irp*` item in bag 8 (`EInventoryCategory::RECIPE`) — the scroll itself,
+   which is what the inventory and the phone list show, and
+2. a bit in `FRecipeStatusP.recipeInfoMap`, which is what the **bench** reads.
+
+The game writes both at the same moment and they stay in lockstep: on a played
+Switch save 837 of the 839 recipe items in the bag have their bit set, and not
+one bit is set without its item.
+
+The block is one flat, fixed-length run near the end of the payload:
+
+```
+uint32  magic  = 0x31CCCDDC
+uint32  count                       every recipe the build defines
+count x { FString recipe_id; uint32 bit_flag }
+```
+
+`count` is the whole master table rather than a list of what the player has,
+which is why it grows with the game build and not with progress: **1788**
+entries on the June Switch build (`rev94200`), **1883** in December
+(`rev104282`), **2012** on `rev110414`. Nothing in it changes length, so an
+edit is a four-byte poke per recipe and no offset behind the block moves.
+
+`bit_flag` is `ERecipeSaveCategory`, whose named members the executable's
+enumerator table gives as `None = 0`, `Created = 2`, `Favorite = 4`,
+`New = 8`, `GotWindow = 16`. **Bit 0 has no name in that enum** — it is the
+"player has this recipe" flag the crafting UI reads as
+`ItemCraftRecipeInfo_Ver2::isHave`, whose neighbour in the same struct is
+`isCreated` (bit 1). Every value seen in a real save is 0, 1, 3 or 9:
+`Created` and `New` never appear on their own, which is what pins bit 0 as the
+one that means *known*.
+
+Recipe ids are `recipe_life<NN>_<item>` and the `NN` is the Life that crafts
+it, so only the six crafting Lives appear — `life0009` Cook, `life0010`
+Blacksmith, `life0011` Carpenter, `life0012` Tailor, `life0013` Alchemist,
+`life0014` Artist. The matching bag item is `irp_` + the id, with the leading
+`recipe_` dropped on most of them (`recipe_life09_flash01` ↔
+`irp_life09_flash01`) and kept on 58 (`irp_recipe_life13_ilt11000110`), which
+is why the item list and this list stay two databases rather than one derived
+from the other.
+
+Rank still gates the *tabs*: a bench groups its list by the Life rank each
+recipe is learned at (`ItemCraftRecipeSelectMenuInfo.rankList`,
+`EItemCraftRecipeDetailHeaderIconType::Rank`), so a Life left at rank 0 shows a
+short list however many bits are set here. Marking recipes known and raising
+the Life's rank are two separate edits.
 
 ## 6. Currency
 

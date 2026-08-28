@@ -13,6 +13,7 @@ from .gvas import GvasHeader
 from .items import (ItemSection, ItemRecord, EMPTY, _fstring_len, heal_core_names,
                     category_for as _items_category)
 from .lives import LifeSection
+from .recipes import RecipeStatus
 from .world import (BoardSection, HugeMap, SyncFlags, TravelPoints, BOARDS,
                     BOARD_BY_KEY, TOWER_COUNT, HUGEMAP_ID, tower_text_key)
 from . import character as _character
@@ -96,6 +97,7 @@ class SaveFile:
         self._boards: Optional[BoardSection] = None
         self._hugemap: Optional[HugeMap] = None
         self._flags: Optional[SyncFlags] = None
+        self._recipes: Optional[RecipeStatus] = None
 
     # ------------------------------------------------------------- lifecycle
     @classmethod
@@ -146,6 +148,7 @@ class SaveFile:
         self._boards = None
         self._hugemap = None
         self._flags = None
+        self._recipes = None
 
     # ----------------------------------------------------------------- items
     @property
@@ -185,10 +188,12 @@ class SaveFile:
 
     def flush_items(self) -> None:
         """Write pending item edits back into the payload."""
-        # Ginormosia sits behind the item block, so it has to be written at its
-        # current offsets before the item splice moves it.
+        # Ginormosia and the recipe table sit behind the item block, so they
+        # have to be written at their current offsets before the splice moves
+        # them.
         self.flush_world()
         self.flush_flags()
+        self.flush_recipes()
         sec = self._items
         if sec is None:
             return
@@ -203,6 +208,7 @@ class SaveFile:
         self._boards = None
         self._hugemap = None
         self._flags = None
+        self._recipes = None
 
     def give_item(self, item_id: str, quantity: int = 1,
                   array_index: Optional[int] = None,
@@ -239,7 +245,8 @@ class SaveFile:
         return rec
 
     def give_every(self, kind: str, quantity: int = 1, *,
-                   title: Optional[int] = None, super_op: bool = False) -> dict:
+                   title: Optional[int] = None, super_op: bool = False,
+                   learn: bool = True) -> dict:
         """Put every item of one *kind* into the bag the game keeps it in.
 
         *kind* is one of :data:`flisave.gear.EVERY_KINDS`.  What *quantity*
@@ -260,7 +267,14 @@ class SaveFile:
         there, since that is the state the caller just asked every one of them
         to be in.
 
-        Returns ``{"added", "topped_up", "no_room", "total", "container"}``.
+        Recipes are the one kind where the bag is only half of it: a crafting
+        bench lists what ``FRecipeStatusP`` says the player knows, not what is
+        in bag 8, so a recipe fill marks them known as well unless *learn* says
+        otherwise.  Filling the bag alone is what leaves every recipe in the
+        phone's list and the bench still empty.
+
+        Returns ``{"added", "topped_up", "no_room", "total", "container"}``,
+        and for recipes a ``"learned"`` count alongside them.
         """
         from . import gear as _gear
         sec = self.items
@@ -317,8 +331,13 @@ class SaveFile:
                 rec.place(item_id, quantity, instance, title, super_op)
                 instance += 1
                 added += 1
-        return {"added": added, "topped_up": topped, "no_room": no_room,
-                "total": len(every), "container": index}
+        out = {"added": added, "topped_up": topped, "no_room": no_room,
+               "total": len(every), "container": index}
+        if kind == "recipes" and learn:
+            sec = self.recipes            # flushes the fill, then reads the table
+            out["learned"] = 0 if sec is None else sec.learn_all()
+            self.flush_recipes()
+        return out
 
     def set_every_quantity(self, array_index: int, quantity: int) -> int:
         """Set the stack size of everything in one bag.  Returns how many changed.
@@ -355,6 +374,7 @@ class SaveFile:
             self._boards = None
             self._hugemap = None
             self._flags = None
+            self._recipes = None
         return notes
 
     def repair_gear(self, *, apply: bool = True) -> List[str]:
@@ -552,6 +572,59 @@ class SaveFile:
             out["cleared"] = hm.clear_shrines()
         return out
 
+    # --------------------------------------------------------------- recipes
+    @property
+    def recipes(self) -> Optional[RecipeStatus]:
+        """Which recipes the player knows.  None if this save has no table.
+
+        This is the half of a recipe the *crafting bench* reads; the ``irp``
+        scroll in bag 8 is the other half, and filling the bag alone leaves the
+        bench list empty.  See :mod:`flisave.recipes`.
+        """
+        self.flush_items()
+        if self._recipes is None:
+            self._recipes = RecipeStatus.parse(bytes(self.payload))
+        return self._recipes
+
+    def flush_recipes(self) -> None:
+        """Write pending recipe edits back.  The block is fixed-length."""
+        if self._recipes is not None:
+            self._recipes.write(self.payload)
+
+    def recipe_rows(self, language: str = "en") -> List[dict]:
+        """One row per crafting Life: how many of its recipes are known."""
+        sec = self.recipes
+        if sec is None:
+            return []
+        return sec.table(_names.get(), language)
+
+    def learn_recipes(self, lives: Optional[Iterable[str]] = None, *,
+                      on: bool = True, mark_new: bool = False,
+                      give_items: bool = False) -> dict:
+        """Mark recipes known, which is what puts them in the bench list.
+
+        *lives* is a list of crafting-Life ids (``life0010``) or None for every
+        one of them.  With *give_items* the matching ``irp`` scrolls go into the
+        bag as well, which is the pair the game itself writes -- though it is
+        the flag, not the scroll, that the bench reads.
+
+        Returns ``{"changed", "known", "total", "lives", "items"}``.
+        """
+        out: dict = {"items": None}
+        if give_items and on:
+            # The bag first: filling it moves every offset behind the item
+            # block, and reading the recipe table afterwards finds it where the
+            # splice left it.
+            out["items"] = self.give_every("recipes", 1, learn=False)
+        sec = self.recipes
+        if sec is None:
+            raise RuntimeError("this save has no recipe table")
+        out["changed"] = sec.learn_all(lives, on, mark_new)
+        out["lives"] = list(lives) if lives else sec.lives
+        out.update(sec.counts()["all"])
+        self.flush_recipes()
+        return out
+
     # ------------------------------------------------------------- character
     @property
     def character(self):
@@ -574,6 +647,7 @@ class SaveFile:
         self._boards = None
         self._hugemap = None
         self._flags = None
+        self._recipes = None
 
     def set_vital(self, field: str, value: int) -> None:
         """Write one of hp / hp_max / sp / sp_max."""
@@ -757,6 +831,7 @@ class SaveFile:
         self._boards = None
         self._hugemap = None
         self._flags = None
+        self._recipes = None
 
     def hexdump(self, offset: int, length: int = 128) -> str:
         self.flush_items()

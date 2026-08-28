@@ -18,7 +18,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from flisave import icons as iconset
-from flisave import gear, items, names as namedb
+from flisave import gear, items, names as namedb, recipes as reciped
 from flisave.character import FIELDS as VITALS
 from flisave.hunt import Hunt, TYPES as HUNT_TYPES
 from flisave.save import SaveFile, CURRENCIES
@@ -510,7 +510,47 @@ class App(ttk.Frame):
                    ).grid(row=0, column=8, padx=(18, 6))
         ttk.Button(ed, text="Apply to every Life",
                    command=lambda: self.on_apply_life(True)).grid(row=0, column=9)
+
+        self._recipe_panel(f, ed)
         return f
+
+    def _recipe_panel(self, parent, above):
+        """"Recipes known" -- the list a crafting bench reads.
+
+        A recipe is two things: the ``irp`` scroll in the Recipes bag, which is
+        what the phone's list shows, and a bit in the save's recipe table,
+        which is what the bench reads.  Filling the bag alone -- which is all
+        "Give every recipe" on the Items tab used to do -- leaves the bench
+        empty, so the flag gets a control of its own here, next to the ranks
+        that decide which of those recipes a bench will actually offer.
+
+        Packed before the Edit frame so it comes out underneath it.
+        """
+        self._recipe_lives = []
+        self._recipe_rows = {}
+        self.frm_recipes = ttk.LabelFrame(parent, text="Recipes known", padding=10)
+        row = ttk.Frame(self.frm_recipes)
+        row.pack(fill="x")
+        ttk.Label(row, text="Life").pack(side="left")
+        self.cmb_recipe = ttk.Combobox(row, state="readonly", width=40)
+        self.cmb_recipe.pack(side="left", padx=6)
+        self.cmb_recipe.bind("<<ComboboxSelected>>", self.on_pick_recipe_life)
+        self.var_recipe = tk.BooleanVar(value=True)
+        ttk.Checkbutton(row, text="known (listed at the bench)",
+                        variable=self.var_recipe).pack(side="left", padx=8)
+        self.var_recipe_items = tk.BooleanVar(value=True)
+        ttk.Checkbutton(row, text="give the scrolls too",
+                        variable=self.var_recipe_items).pack(side="left")
+        ttk.Button(row, text="Learn every recipe",
+                   command=lambda: self.on_apply_recipes(True)
+                   ).pack(side="right")
+        ttk.Button(row, text="Apply to this Life",
+                   command=lambda: self.on_apply_recipes(False)
+                   ).pack(side="right", padx=6)
+        self.lbl_recipe = ttk.Label(self.frm_recipes, text="", foreground=GREY,
+                                    wraplength=900, justify="left")
+        self.lbl_recipe.pack(anchor="w", pady=(6, 0))
+        self.frm_recipes.pack(side="bottom", fill="x", pady=(8, 0), before=above)
 
     # ---------------------------------------------------------------- world
     def _tab_world(self, parent):
@@ -1206,10 +1246,13 @@ class App(ttk.Frame):
         if self._bulk_kind is None:
             return
         if not self.bulk_equipment():
-            self.lbl_bulk_note.configure(
-                text="these stack, so each item lands in one slot holding that "
-                     "many - a record that is only a count has nowhere to keep "
-                     "a grade")
+            note = ("these stack, so each item lands in one slot holding that "
+                    "many - a record that is only a count has nowhere to keep "
+                    "a grade")
+            if self._bulk_kind == "recipes":
+                note += ("  -  the scrolls are half of a recipe, so this marks "
+                         "them known too, which is what a crafting bench reads")
+            self.lbl_bulk_note.configure(text=note)
             return
         title = self.bulk_title()
         bits = ["every piece is its own slot, so the number is how many copies "
@@ -1298,6 +1341,9 @@ class App(ttk.Frame):
         if not ranks:                      # no name database - plain numbers
             ranks = [str(n) for n in range(8)]
         self.cmb_rank["values"] = ["%d  %s" % (i, r) for i, r in enumerate(ranks)]
+        # 0 is "not started" and the last row is as high as a Life goes; the
+        # recipe panel needs it to tell a rank that is holding a bench back.
+        self._max_life_rank = len(ranks) - 1
         if self.save is None:
             return
         try:
@@ -1312,6 +1358,80 @@ class App(ttk.Frame):
                 image=self.icons.life(r["life_id"], iconset.SMALL) or "",
                 values=(r.get("rank", "-"), r.get("rank_name", ""),
                         r.get("level", "-"), r.get("exp", "-"), r.get("pa", "-")))
+        self.refresh_recipes()
+
+    def refresh_recipes(self):
+        """Refill the recipe dropdown, each entry carrying its own count.
+
+        The rows are kept, because reading them walks the whole recipe table
+        and the tick box below wants the same numbers.
+        """
+        self._recipe_lives = []
+        rows = [] if self.save is None else self.save.recipe_rows(self.lang())
+        self._recipe_rows = {r["life_id"]: r for r in rows}
+        if not rows:
+            self.cmb_recipe["values"] = []
+            self.cmb_recipe.set("")
+            self.lbl_recipe.configure(
+                text="this save has no recipe table"
+                     if self.save is not None else "")
+            return
+        keep = self.cmb_recipe.current()
+        self.cmb_recipe["values"] = [
+            "%s  -  %d of %d known" % (r["label"], r["known"], r["total"])
+            for r in rows]
+        self._recipe_lives = [r["life_id"] for r in rows]
+        self.cmb_recipe.current(keep if 0 <= keep < len(rows) else 0)
+        self.on_pick_recipe_life()
+
+    def selected_recipe_life(self):
+        i = self.cmb_recipe.current()
+        if not self._recipe_lives or i < 0:
+            raise RuntimeError("open a save with a recipe table first")
+        return self._recipe_lives[i]
+
+    def on_pick_recipe_life(self, _evt=None):
+        """Refill the tick box from the save, and say what the bench will do."""
+        if self.save is None or not self._recipe_lives:
+            return
+        life_id = self.selected_recipe_life()
+        row = self._recipe_rows.get(life_id,
+                                    {"known": 0, "total": 0, "label": life_id})
+        self.var_recipe.set(row["known"] >= row["total"])
+        # The rank is the other half of what a bench shows, and it is the half
+        # the player can see going wrong: a Life at rank 0 has one short tab
+        # whatever is ticked here.  It is read off the table above rather than
+        # the save, which has just filled that table from it.
+        rank = 0
+        if self.tree_life.exists(life_id):
+            rank = as_int(self.tree_life.item(life_id, "values")[0], 0)
+        note = ("%d of %d %s recipes are known -- that is the list the crafting "
+                "bench reads, not the scrolls in the bag."
+                % (row["known"], row["total"], row["label"]))
+        if rank < getattr(self, "_max_life_rank", 7):
+            note += ("  A bench groups its list by Life rank and %s is rank %d, "
+                     "so raise the rank above as well to see the whole catalogue."
+                     % (row["label"], rank))
+        self.lbl_recipe.configure(text=note)
+
+    def on_apply_recipes(self, everyone):
+        def go():
+            sf = self.need()
+            if sf.recipes is None:
+                raise RuntimeError("this save has no recipe table")
+            lives = None if everyone else [self.selected_recipe_life()]
+            on = True if everyone else bool(self.var_recipe.get())
+            got = sf.learn_recipes(lives, on=on,
+                                   give_items=on and bool(
+                                       self.var_recipe_items.get()))
+            self.refresh_lives()
+            note = "%d recipe(s) %s, %d of %d known" % (
+                got["changed"], "learned" if on else "forgotten",
+                got["known"], got["total"])
+            if got["items"]:
+                note += "  -  %d scroll(s) added" % got["items"]["added"]
+            self.touch(note)
+        self.guard(go)
 
     # ------------------------------------------------------ character edits
     def on_apply_character(self):
@@ -1650,6 +1770,12 @@ class App(ttk.Frame):
                     else "topped up")
             note = "%d added, %d %s, of %d %s" % (
                 got["added"], got["topped_up"], done, got["total"], kind)
+            if got.get("learned"):
+                # The scrolls are only half of a recipe; without the flag the
+                # crafting benches list nothing new, however full the bag is.
+                note += ("  -  %d marked known, so the crafting benches "
+                         "list them" % got["learned"])
+                self.refresh_recipes()
             if got["no_room"]:
                 note += "  -  %d did not fit" % got["no_room"]
             self.touch(note)

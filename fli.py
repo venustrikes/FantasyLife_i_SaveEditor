@@ -10,6 +10,7 @@
     python fli.py towers     <save> [--unlock] [--tower N] [--off]
     python fli.py money      <save> [--set 99999] [--gift N] [--cashnuts N] [-o out]
     python fli.py set-life   <save> [--life life0001|all] --level 99 --exp 0 [-o out]
+    python fli.py recipes    <save> [--learn all|blacksmith|10 ...] [--forget] [-o out]
     python fli.py give       <save> --id ics01000780 --qty 99 [-o out]
     python fli.py give       <save> --id iwp02000220 [--title 5]
     python fli.py give       <save> --id ilt01000120 --super-op
@@ -40,7 +41,7 @@ from flisave.codec import SaveContainer, decode_file
 from flisave.hunt import Hunt, scan_all_types
 from flisave.save import SaveFile, CURRENCIES
 from flisave.world import BOARDS, BOARD_BY_KEY, MAX_RANK, TOWER_COUNT
-from flisave import gear, items, names as namedb
+from flisave import gear, items, names as namedb, recipes as reciped
 
 TYPES = ["u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "f32", "f64"]
 
@@ -119,6 +120,40 @@ def cmd_lives(args):
                  r.get("pa", "-")))
     print()
     print(sf.lives.summary(bytes(sf.payload)).split("\n\n")[0])
+
+
+def cmd_recipes(args):
+    sf = SaveFile.load(args.save, verify=not args.no_verify)
+    if sf.recipes is None:
+        sys.exit("this save has no recipe table")
+    if args.learn or args.forget:
+        which = args.learn or args.forget
+        lives = None if "all" in [w.lower() for w in which] \
+            else reciped.resolve_lives(which)
+        got = sf.learn_recipes(lives, on=not args.forget,
+                               mark_new=args.mark_new,
+                               give_items=args.items and not args.forget)
+        print("%s: %d recipe(s) changed, %d of %d now known"
+              % ("forgot" if args.forget else "learned",
+                 got["changed"], got["known"], got["total"]))
+        if got["items"]:
+            print("  scrolls: %d added, %d topped up, of %d"
+                  % (got["items"]["added"], got["items"]["topped_up"],
+                     got["items"]["total"]))
+        _save_out(sf, args)
+        return
+    print("%-10s %-14s %8s %8s" % ("id", "life", "known", "total"))
+    for r in sf.recipe_rows(args.lang):
+        print("%-10s %-14s %8d %8d"
+              % (r["life_id"], r["label"][:14], r["known"], r["total"]))
+    print()
+    print(sf.recipes.summary())
+    print()
+    print("This is the list a crafting bench reads.  The irp scrolls in bag 8")
+    print("are the other half of a recipe -- the phone's list shows those, so a")
+    print("bag filled on its own leaves the bench with nothing new in it.")
+    print("A bench still groups its list by Life rank, so a Life left at rank 0")
+    print("shows a short list however many recipes are known.")
 
 
 def cmd_boards(args):
@@ -347,6 +382,11 @@ def cmd_give_all(args):
                  items.ITEM_TITLES[args.title] if args.title is not None
                  else "the best grade each item has stats for",
                  ", aged %d years" % items.OP_RIPENING_AGE if args.super_op else ""))
+    if "learned" in got:
+        # The scrolls are only half of a recipe; without this the bench list
+        # does not move, however full the bag is.
+        print("  %d recipe(s) marked known, so the crafting benches list them"
+              % got["learned"])
     if got["no_room"]:
         print("  %d did not fit -- the bag holds %d" % (got["no_room"], bag.count))
     print("  bag now %d/%d used" % (bag.used, bag.count))
@@ -500,6 +540,25 @@ def main(argv=None):
     s = sub.add_parser("ids"); s.add_argument("save"); s.set_defaults(f=cmd_ids)
 
     s = sub.add_parser("lives"); s.add_argument("save"); s.set_defaults(f=cmd_lives)
+
+    s = sub.add_parser("recipes", help="which recipes the player knows -- the "
+                                       "list a crafting bench reads, which is "
+                                       "not the same thing as the scrolls in "
+                                       "the bag")
+    s.add_argument("save")
+    s.add_argument("--learn", action="append", metavar="LIFE",
+                   help="mark every recipe of this crafting Life known: all, a "
+                        "name (blacksmith), a number (10) or an id (life0010); "
+                        "repeatable")
+    s.add_argument("--forget", action="append", metavar="LIFE",
+                   help="the other way round, same values")
+    s.add_argument("--items", action="store_true",
+                   help="put the matching irp scrolls in the bag as well, "
+                        "which is the pair the game itself writes")
+    s.add_argument("--mark-new", action="store_true",
+                   help='flag them "NEW!" the way a freshly learned one is')
+    s.add_argument("-o", "--out")
+    s.set_defaults(f=cmd_recipes)
 
     s = sub.add_parser("boards", help="bulletin boards: show them, or finish "
                                       "every job on one so its level maxes out")
