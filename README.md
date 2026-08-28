@@ -1,14 +1,15 @@
 # Fantasy Life i: The Girl Who Steals Time — save editor
 
 Decrypts, edits and re-encrypts saves for *Fantasy Life i: The Girl Who Steals
-Time* (LEVEL5). The container format is the same on **Steam, Android and
-Switch**, so a save dumped from any of them works here.
+Time* (LEVEL5). The container format is the same on **Steam, iOS, Android and
+Switch**, so a save dumped from any of them works here. didn't test
+with PS5 saves.
 
 The encryption, compression and integrity hash were reverse-engineered from the
 shipping executable — see [`docs/FORMAT.md`](docs/FORMAT.md) for the whole
 format.
 
-## In a browser — no install
+## Browser version
 
 There is a web version of this editor, and for most edits it is the easier
 way in:
