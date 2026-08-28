@@ -288,29 +288,6 @@ python tools/build_textdb.py FANTASY-LIFE-i-v2.2.1.0-full-apkvision.apk ^
 
 `FLI_TEXT_DB` points the editor at a database somewhere else.
 
-## Icons
-
-The editor shows the game's own art: the fourteen Life emblems, the Dosh coin,
-and the 63 items that really do have a 2D icon — key items, mostly. Ordinary
-items (potions, weapons, materials) have **no icon to take**: the game draws
-them as 3D models in the inventory, so the editor gives them a coloured chip
-per category instead.
-
-`data/icons/` holds them as plain PNGs at two sizes, which Tk reads by itself —
-the editor needs nothing extra at runtime. Rebuilding them does need two more
-packages, and the same Oodle decompressor the text database wants:
-
-```
-pip install Pillow texture2ddecoder
-python tools/build_icons.py FANTASY-LIFE-i-v2.2.1.0-full-apkvision.apk ^
-       --oodle C:\path\to\oo2core_8_win64.dll
-```
-
-The art is stored as ASTC 4x4 in the Android build, which is why the decoder is
-needed: `flisave/texture.py` pulls the mip out of the cooked texture and
-`texture2ddecoder` turns it into pixels. Set `FLI_ICONS` to use a different
-folder; with the folder missing the editor falls back to text.
-
 ## Bulk fills
 
 Seven bags are worth having in full, and the editor knows every id in each.
@@ -437,8 +414,7 @@ hands out.
 
 The gear in the "super OP" saves going round is not spawned gear with a big
 number written into it. It is gear that has been through the **Aging Altar**
-(`熟成祭壇`, *Aging Altar*, IT *Altare dell'evoluzione*) in the Plant Dungeon,
-and the save records three separate things about it — all inside the equipment
+in the Plant Dungeon, and the save records three separate things about it — all inside the equipment
 extension, all of which this editor used to carry through untouched:
 
 | Field | What it does |
