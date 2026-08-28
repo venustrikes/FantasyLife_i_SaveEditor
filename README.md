@@ -538,7 +538,7 @@ data/                the shipped name database and icons
 docs/FORMAT.md       format documentation
 ```
 
-## Help and troubleshooting
+## Help and troubleshooting 
 
 Anything at all — a save that will not open, an edit the game does not take, a
 platform not covered above, or something you want the editor to do:
