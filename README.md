@@ -289,6 +289,26 @@ python tools/build_textdb.py FANTASY-LIFE-i-v2.2.1.0-full-apkvision.apk ^
 
 `FLI_TEXT_DB` points the editor at a database somewhere else.
 
+### The Dark Dragon exception
+
+One set of rows in the shipped tables does not match the game: the fourteen
+**Dark Dragon** weapons and Life tools are named the wrong way round. The id
+the tables call *Dark Dragon Sword* is the one the game shows as **True** Dark
+Dragon Sword, and vice versa. The editor swaps those names back on load
+(`names.SWAPPED_NAMES`), so picking a name here gives you that item in game.
+
+Two things say the tables are the odd one out rather than the game. Every
+other pair in the game reads as you would expect — *Axe of Time* 550, *True
+Axe of Time* 750 — and these fourteen are the only pairs where the "True" id
+carries the **weaker** stat list; and a player who spawned both and looked in
+game read them back the other way round. The ids the save stores are right,
+so nothing about the swap touches a save file: only the label moves.
+
+The Dark Dragon **shield** looks the same shape but armour carries no stat
+list to check it against and nobody has read it off the game yet, so it is
+left as the tables have it.
+
+
 ## Bulk fills
 
 Seven bags are worth having in full, and the editor knows every id in each.

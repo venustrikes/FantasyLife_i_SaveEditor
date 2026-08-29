@@ -30,6 +30,62 @@ DATA_FILE = (os.environ.get("FLI_TEXT_DB")
 # hint only - gamedata.ITEM_ID_RE is the authoritative list of item prefixes.
 _PLACEABLE = re.compile(r"^[a-z]{2,4}\d{6,}$")
 
+# The Dark Dragon gear the text tables name the wrong way round.
+#
+# Every other pair in the game reads as you would expect - the id the tables
+# call "Axe of Time" is the weaker one, "True Axe of Time" the stronger.  The
+# fourteen Dark Dragon weapons and Life tools are the only pairs where the
+# "True" id is the *weaker* of the two, and a player who put both in a save
+# read the names back off the game the other way round: the low id came out
+# True, the high id plain.  Both halves of that say the same thing - the stats
+# are attached to the right ids and the names are not - so the fix is to swap
+# the names back rather than to touch anything a save actually stores.
+#
+# Nothing else in the editor keys off this: bulk fills, icons and the stat
+# lists are all keyed by id, and the ids do not move.  If a patch ever puts
+# the names back, deleting this list is the whole undo.
+#
+# The Dark Dragon shield (iam01007060 / iam01007070) has the same shape and
+# may well have the same fault, but armour carries no stat list to check it
+# against and nobody has read it off the game yet, so it is left alone.
+SWAPPED_NAMES = [
+    ("iwp02000240", "iwp02000250"),   # Dark Dragon Sword / True
+    ("iwp03000220", "iwp03000230"),   # Dark Dragon Buster / True
+    ("iwp04000220", "iwp04000230"),   # Dark Dragon Staff / True
+    ("iwp05000230", "iwp05000240"),   # Dark Dragon Bow / True
+    ("ilt01000130", "ilt01000140"),   # Dark Dragon Axe / True
+    ("ilt02000130", "ilt02000140"),   # Dark Dragon Pickaxe / True
+    ("ilt03000130", "ilt03000140"),   # Dark Dragon Fishing Rod / True
+    ("ilt04000130", "ilt04000140"),   # Dark Dragon Hoe / True
+    ("ilt06000130", "ilt06000140"),   # Dark Dragon Saw / True
+    ("ilt07000130", "ilt07000140"),   # Dark Dragon Needle / True
+    ("ilt08000130", "ilt08000140"),   # Dark Dragon Hammer / True
+    ("ilt09000130", "ilt09000140"),   # Dark Dragon Brush / True
+    ("ilt10000130", "ilt10000140"),   # Dark Dragon Frying Pan / True
+    ("ilt11000130", "ilt11000140"),   # Dark Dragon Flask / True
+]
+
+
+def apply_swaps(by_language: Dict[str, Dict[str, str]]) -> None:
+    """Exchange the text of every :data:`SWAPPED_NAMES` pair, in every language.
+
+    Takes a ``language -> {key: text}`` table and edits it in place.  A pair
+    with only one side present moves rather than duplicates, so a language
+    that names one of the two still names exactly one of them afterwards.
+    """
+    for entries in by_language.values():
+        if not isinstance(entries, dict):
+            continue
+        for low, high in SWAPPED_NAMES:
+            a, b = entries.get(low), entries.get(high)
+            if a is None and b is None:
+                continue
+            for key, value in ((low, b), (high, a)):
+                if value is None:
+                    entries.pop(key, None)
+                else:
+                    entries[key] = value
+
 
 def _fold(text: str) -> str:
     """Casefolded and stripped of accents, so 'elisir' finds 'Elisìr'."""
@@ -51,6 +107,8 @@ class NameDB:
         self.names: Dict[str, Dict[str, str]] = payload.get("names") or {}
         self.descriptions: Dict[str, Dict[str, str]] = payload.get("descriptions") or {}
         self._display: Dict[str, Dict[str, str]] = {}
+        apply_swaps(self.names)
+        apply_swaps(self.descriptions)
 
     # --------------------------------------------------------------- lookups
     def name(self, key: str, language: str = "en") -> Optional[str]:
