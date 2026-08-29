@@ -291,22 +291,29 @@ python tools/build_textdb.py FANTASY-LIFE-i-v2.2.1.0-full-apkvision.apk ^
 
 ### The Dark Dragon exception
 
-One set of rows in the shipped tables does not match the game: the fourteen
-**Dark Dragon** weapons and Life tools are named the wrong way round. The id
-the tables call *Dark Dragon Sword* is the one the game shows as **True** Dark
-Dragon Sword, and vice versa. The editor swaps those names back on load
-(`names.SWAPPED_NAMES`), so picking a name here gives you that item in game.
+One set of rows in the shipped tables does not match the game: the fifteen
+**Dark Dragon** weapons, Life tools and the shield are named the wrong way
+round. The id the tables call *Dark Dragon Sword* is the one the game shows as
+**True** Dark Dragon Sword, and vice versa. The editor swaps those names back
+on load (`names.SWAPPED_NAMES`), so picking a name here gives you that item in
+game.
 
 Two things say the tables are the odd one out rather than the game. Every
 other pair in the game reads as you would expect — *Axe of Time* 550, *True
-Axe of Time* 750 — and these fourteen are the only pairs where the "True" id
-carries the **weaker** stat list; and a player who spawned both and looked in
-game read them back the other way round. The ids the save stores are right,
-so nothing about the swap touches a save file: only the label moves.
+Axe of Time* 750 — and the fourteen Dark Dragon weapons and tools are the only
+pairs where the "True" id carries the **weaker** stat list; and a player who
+spawned both and looked in game read them back the other way round. The ids
+the save stores are right, so nothing about the swap touches a save file: only
+the label moves.
 
-The Dark Dragon **shield** looks the same shape but armour carries no stat
-list to check it against and nobody has read it off the game yet, so it is
-left as the tables have it.
+The **shield** has no stat list to compare — armour rows cannot be pinned
+reliably — so it was settled in game instead: one Dark Dragon shield alone in
+the bag, where the name on screen can only be the id that was put there. It
+reads True, so it is in the list with the rest.
+
+Those fifteen are every item in the game that carries an Ultra/Prime name
+variant (`<id>_01`, `<id>_02`), which is the whole Dark Dragon line and
+nothing else.
 
 
 ## Bulk fills

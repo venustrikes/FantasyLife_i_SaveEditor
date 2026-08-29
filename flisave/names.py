@@ -34,20 +34,23 @@ _PLACEABLE = re.compile(r"^[a-z]{2,4}\d{6,}$")
 #
 # Every other pair in the game reads as you would expect - the id the tables
 # call "Axe of Time" is the weaker one, "True Axe of Time" the stronger.  The
-# fourteen Dark Dragon weapons and Life tools are the only pairs where the
-# "True" id is the *weaker* of the two, and a player who put both in a save
-# read the names back off the game the other way round: the low id came out
-# True, the high id plain.  Both halves of that say the same thing - the stats
-# are attached to the right ids and the names are not - so the fix is to swap
-# the names back rather than to touch anything a save actually stores.
+# Dark Dragon weapons and Life tools are the only pairs where the "True" id is
+# the *weaker* of the two, and a player who put both in a save read the names
+# back off the game the other way round: the low id came out True, the high id
+# plain.  Both halves of that say the same thing - the stats are attached to
+# the right ids and the names are not - so the fix is to swap the names back
+# rather than to touch anything a save actually stores.
+#
+# Fifteen items in the game carry Ultra/Prime name variants (``<id>_01`` and
+# ``_02``), every one of them Dark Dragon, and all fifteen are listed below.
+# The fourteen weapons and tools were caught by that stat comparison; the
+# shield has no stat list to compare - armour rows cannot be pinned reliably -
+# and was read off the game instead, one Dark Dragon shield alone in the bag
+# so the name on screen could only be the id that was put there.
 #
 # Nothing else in the editor keys off this: bulk fills, icons and the stat
 # lists are all keyed by id, and the ids do not move.  If a patch ever puts
 # the names back, deleting this list is the whole undo.
-#
-# The Dark Dragon shield (iam01007060 / iam01007070) has the same shape and
-# may well have the same fault, but armour carries no stat list to check it
-# against and nobody has read it off the game yet, so it is left alone.
 SWAPPED_NAMES = [
     ("iwp02000240", "iwp02000250"),   # Dark Dragon Sword / True
     ("iwp03000220", "iwp03000230"),   # Dark Dragon Buster / True
@@ -63,6 +66,7 @@ SWAPPED_NAMES = [
     ("ilt09000130", "ilt09000140"),   # Dark Dragon Brush / True
     ("ilt10000130", "ilt10000140"),   # Dark Dragon Frying Pan / True
     ("ilt11000130", "ilt11000140"),   # Dark Dragon Flask / True
+    ("iam01007060", "iam01007070"),   # Dark Dragon Shield / True
 ]
 
 
