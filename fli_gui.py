@@ -3,10 +3,11 @@
 
     python fli_gui.py  [path to 002DAE74-00-gamedata.bin]
 
-Five tabs: the character (name, Dosh, vitals), the item containers, the Lives,
-the world (bulletin boards and Ginormosia), and a value hunter for anything
-still unmapped.  Edits are held in memory until Save, which keeps a timestamped
-.bak of the file it replaces.
+Six tabs: the character (name, Dosh, vitals), the item containers, the Lives,
+the world (bulletin boards and Ginormosia), the Base Camp island -- which can
+be exported and imported whole, so a layout can be shared -- and a value hunter
+for anything still unmapped.  Edits are held in memory until Save, which keeps
+a timestamped .bak of the file it replaces.
 """
 from __future__ import annotations
 
@@ -50,6 +51,40 @@ BULK_FULL_STACK = ("materials", "crafts")
 # The grade dropdown's first row: no single grade at all, but each item spawned
 # at the best one it has stats for, which is what the game itself hands out.
 BULK_BEST_GRADE = "best grade for each item"
+
+# The Base Camp tab's two dropdowns: what the list says, and what it means.
+CAMP_KINDS = (
+    ("furniture placed on it", "furniture"),
+    ("buildings, bridges and squares", "buildings"),
+    ("ground and water tiles", "terrain"),
+    ("roads laid over the ground", "roads"),
+    ("obstacles still in the way", "obstacles"),
+    ("area markers", "markers"),
+)
+CAMP_SCOPES = (
+    ("everything - the whole island", "all"),
+    ("terrain only - ground, water, cliffs, roads", "terrain"),
+    ("objects only - buildings, furniture, houses", "objects"),
+)
+CAMP_SCOPE_HELP = {
+    "all": "Replaces the island outright: every tile and every object, the "
+           "houses and the rooms inside them. This is the one that gives you "
+           "the layout exactly as it was exported.",
+    "terrain": "Takes the ground, the water, the cliff faces and the roads, "
+               "and leaves your own buildings and furniture where they are. "
+               "They keep their old positions, so anything that stood on "
+               "ground the new terrain does not have will be left floating or "
+               "buried.",
+    "objects": "Takes the buildings, furniture, obstacles, houses and room "
+               "interiors, and leaves your own ground and water alone. The "
+               "incoming objects keep their positions, so they can land on "
+               "terrain that is not shaped for them.",
+}
+IMPORT_UNCONFIRMED = (
+    "Importing a layout throws away what is on your island now.\n\n"
+    'Tick "replace what I have now" to confirm, and keep a copy of the save '
+    "first - the editor writes a .bak, but only of the file it replaces."
+)
 
 SAVE_NAME = "002DAE74-00-gamedata.bin"
 
@@ -232,6 +267,7 @@ class App(ttk.Frame):
         nb.add(self._tab_items(nb), text="  Items  ")
         nb.add(self._tab_lives(nb), text="  Lives  ")
         nb.add(self._tab_world(nb), text="  World  ")
+        nb.add(self._tab_camp(nb), text="  Base Camp  ")
         nb.add(self._tab_tools(nb), text="  Find / Edit values  ")
 
         self.status = ttk.Label(self, text="Open a save to begin.",
@@ -933,6 +969,242 @@ class App(ttk.Frame):
         self.touch("Ginormosia: " + ", ".join(bits))
 
     # ---------------------------------------------------------------- tools
+    # ------------------------------------------------------------ base camp
+    def _tab_camp(self, parent):
+        # Two tables and the share panel do not fit at the default height, so
+        # this tab scrolls the way the World tab does.
+        outer = ttk.Frame(parent)
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        wsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=wsb.set)
+        wsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        f = ttk.Frame(canvas, padding=10)
+        window = canvas.create_window((0, 0), window=f, anchor="nw")
+
+        def fit(_evt=None):
+            canvas.itemconfigure(window, width=canvas.winfo_width())
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        f.bind("<Configure>", fit)
+        canvas.bind("<Configure>", fit)
+
+        ttk.Label(f, wraplength=980, foreground=GREY,
+                  text="The island in the present: the ground you sculpted, "
+                       "the water and the cliffs you cut into it, the roads, "
+                       "the buildings and everything placed on them. All of it "
+                       "sits in one block of the save, which is what makes a "
+                       "whole layout something you can hand to someone else."
+                  ).pack(anchor="w")
+        self.lbl_camp = ttk.Label(f, text="-", style="Head.TLabel")
+        self.lbl_camp.pack(anchor="w", pady=(8, 0))
+        self.lbl_camp2 = ttk.Label(f, text="", foreground=GREY, wraplength=980,
+                                   justify="left")
+        self.lbl_camp2.pack(anchor="w")
+
+        # --------------------------------------------------------- share
+        sh = ttk.LabelFrame(f, text="Share this island", padding=10)
+        sh.pack(fill="x", pady=(12, 0))
+        ttk.Label(sh, wraplength=980, foreground=GREY,
+                  text="An export is one small file holding the whole layout: "
+                       "every tile, every object and where it stands, the "
+                       "houses and the rooms inside them. Anyone with this "
+                       "editor can import it into their own save."
+                  ).pack(anchor="w")
+
+        erow = ttk.Frame(sh)
+        erow.pack(fill="x", pady=(8, 0))
+        ttk.Label(erow, text="note").pack(side="left", padx=(0, 4))
+        self.ent_camp_note = ttk.Entry(erow, width=44)
+        self.ent_camp_note.pack(side="left")
+        ttk.Label(erow, text="a line of your own, stored in the file",
+                  foreground=GREY).pack(side="left", padx=8)
+        ttk.Button(erow, text="Export layout...",
+                   command=lambda: self.guard(self.on_camp_export)
+                   ).pack(side="left", padx=(10, 0))
+
+        irow = ttk.Frame(sh)
+        irow.pack(fill="x", pady=(10, 0))
+        ttk.Label(irow, text="bring across").pack(side="left", padx=(0, 4))
+        self.cmb_camp_scope = ttk.Combobox(
+            irow, state="readonly", width=40,
+            values=[label for label, _key in CAMP_SCOPES])
+        self.cmb_camp_scope.current(0)
+        self.cmb_camp_scope.pack(side="left")
+        self.cmb_camp_scope.bind("<<ComboboxSelected>>",
+                                 lambda _e: self.describe_camp_scope())
+        self.var_camp_ok = tk.BooleanVar(value=False)
+        ttk.Checkbutton(irow, text="replace what I have now",
+                        variable=self.var_camp_ok).pack(side="left", padx=12)
+        ttk.Button(irow, text="Import layout...",
+                   command=lambda: self.guard(self.on_camp_import)
+                   ).pack(side="left")
+        self.lbl_camp_scope = ttk.Label(sh, text="", foreground=GREY,
+                                        wraplength=980, justify="left")
+        self.lbl_camp_scope.pack(anchor="w", pady=(6, 0))
+        self.describe_camp_scope()
+
+        # ------------------------------------------------- what is on it
+        wb = ttk.LabelFrame(f, text="On the island", padding=10)
+        wb.pack(fill="both", expand=True, pady=(12, 0))
+        wrow = ttk.Frame(wb)
+        wrow.pack(fill="x")
+        ttk.Label(wrow, text="show").pack(side="left", padx=(0, 4))
+        self.cmb_camp_kind = ttk.Combobox(
+            wrow, state="readonly", width=34,
+            values=[label for label, _key in CAMP_KINDS])
+        self.cmb_camp_kind.current(0)
+        self.cmb_camp_kind.pack(side="left")
+        self.cmb_camp_kind.bind("<<ComboboxSelected>>",
+                                lambda _e: self.refresh_camp_list())
+        self.lbl_camp_kind = ttk.Label(wrow, text="", foreground=GREY)
+        self.lbl_camp_kind.pack(side="left", padx=10)
+
+        wmid = ttk.Frame(wb)
+        wmid.pack(fill="both", expand=True, pady=(6, 0))
+        ccols = ("count", "id")
+        self.tree_camp = ttk.Treeview(wmid, columns=ccols,
+                                      show="tree headings", height=7)
+        self.tree_camp.heading("#0", text="what")
+        self.tree_camp.column("#0", width=420)
+        for c, w in zip(ccols, (80, 240)):
+            self.tree_camp.heading(c, text=c)
+            self.tree_camp.column(c, width=w, anchor="w")
+        self.tree_camp.pack(side="left", fill="both", expand=True)
+        csb = ttk.Scrollbar(wmid, orient="vertical",
+                            command=self.tree_camp.yview)
+        self.tree_camp.configure(yscrollcommand=csb.set)
+        csb.pack(side="right", fill="y")
+
+        # -------------------------------------------------------- houses
+        hb = ttk.LabelFrame(f, text="Houses", padding=10)
+        hb.pack(fill="both", expand=True, pady=(10, 0))
+        ttk.Label(hb, wraplength=980, foreground=GREY,
+                  text="Every building the game treats as a home, and where "
+                       "that building stands. The player's own is the one "
+                       "whose door leads to Map_MyHouse."
+                  ).pack(anchor="w")
+        hmid = ttk.Frame(hb)
+        hmid.pack(fill="both", expand=True, pady=(6, 0))
+        hcols = ("whose", "door leads to", "rooms", "standing at", "facing")
+        self.tree_house = ttk.Treeview(hmid, columns=hcols,
+                                       show="tree headings", height=6)
+        self.tree_house.heading("#0", text="house")
+        self.tree_house.column("#0", width=300)
+        for c, w in zip(hcols, (100, 170, 60, 190, 70)):
+            self.tree_house.heading(c, text=c)
+            self.tree_house.column(c, width=w, anchor="w")
+        self.tree_house.pack(side="left", fill="both", expand=True)
+        hsb = ttk.Scrollbar(hmid, orient="vertical",
+                            command=self.tree_house.yview)
+        self.tree_house.configure(yscrollcommand=hsb.set)
+        hsb.pack(side="right", fill="y")
+
+        def wheel(evt):
+            canvas.yview_scroll(-3 if evt.delta > 0 else 3, "units")
+            return "break"
+
+        def wire(w):
+            # Tables keep their own wheel; a combobox loses it, so that
+            # scrolling past one cannot quietly change what it is set to.
+            if not isinstance(w, ttk.Treeview):
+                w.bind("<MouseWheel>", wheel)
+            for child in w.winfo_children():
+                wire(child)
+        wire(f)
+        canvas.bind("<MouseWheel>", wheel)
+        return outer
+
+    def camp_kind(self) -> str:
+        return CAMP_KINDS[max(0, self.cmb_camp_kind.current())][1]
+
+    def camp_scope(self) -> str:
+        return CAMP_SCOPES[max(0, self.cmb_camp_scope.current())][1]
+
+    def describe_camp_scope(self):
+        self.lbl_camp_scope.configure(text=CAMP_SCOPE_HELP[self.camp_scope()])
+
+    def refresh_camp(self):
+        self.tree_house.delete(*self.tree_house.get_children())
+        self.lbl_camp2.configure(text="")
+        if self.save is None:
+            self.lbl_camp.configure(text="-")
+            self.refresh_camp_list()
+            return
+        camp = self.save.base_camp
+        if camp is None:
+            self.lbl_camp.configure(text="this save has no Base Camp block")
+            self.lbl_camp2.configure(text=self.save.base_camp_error or "")
+            self.refresh_camp_list()
+            return
+        c = camp.counts()
+        self.lbl_camp.configure(text="%d of %d object slots in use"
+                                     % (c["used"], c["slots"]))
+        self.lbl_camp2.configure(
+            text="ground %d, water %d, %d cliff face(s) over %d height "
+                 "level(s), roads %d   --   buildings %d, furniture %d, "
+                 "obstacles %d, houses %d"
+                 % (c["ground"], c["water"], c["cliffs"], c["levels"],
+                    c["roads"], c["buildings"], c["furniture"], c["obstacles"],
+                    c["houses"]))
+        for h in self.save.house_rows(self.lang()):
+            pos = ("%.0f, %.0f, %.0f" % h["position"]) if h["position"] else "-"
+            face = ("%.0f deg" % h["rotation"]) if h["rotation"] is not None \
+                else "-"
+            self.tree_house.insert("", "end", text=h["name"],
+                                   values=(h["kind"], h["entrance"],
+                                           h["rooms"], pos, face))
+        self.refresh_camp_list()
+
+    def refresh_camp_list(self):
+        self.tree_camp.delete(*self.tree_camp.get_children())
+        self.lbl_camp_kind.configure(text="")
+        if self.save is None or self.save.base_camp is None:
+            return
+        rows = self.save.base_camp_rows(self.camp_kind(), self.lang())
+        for r in rows:
+            self.tree_camp.insert("", "end", text=r["name"],
+                                  values=(r["count"], r["id"]))
+        self.lbl_camp_kind.configure(
+            text="%d kind(s), %d in all"
+                 % (len(rows), sum(r["count"] for r in rows)))
+
+    def on_camp_export(self):
+        sf = self.need()
+        if sf.base_camp is None:
+            raise RuntimeError("this save has no Base Camp block")
+        path = filedialog.asksaveasfilename(
+            title="Export island layout", defaultextension=".flicamp",
+            initialfile="island.flicamp",
+            filetypes=[("Island layout", "*.flicamp"),
+                       ("Readable JSON", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        got = sf.export_base_camp(path, note=self.ent_camp_note.get().strip())
+        self.say("layout written: %s (%.0f KB, %d objects, %d houses)"
+                 % (os.path.basename(path), got["bytes"] / 1024.0,
+                    got["used"], got["houses"]))
+
+    def on_camp_import(self):
+        sf = self.need()
+        if sf.base_camp is None:
+            raise RuntimeError("this save has no Base Camp block")
+        if not self.var_camp_ok.get():
+            messagebox.showinfo(APP, IMPORT_UNCONFIRMED)
+            return
+        path = filedialog.askopenfilename(
+            title="Import island layout",
+            filetypes=[("Island layout", "*.flicamp *.json"),
+                       ("All files", "*.*")])
+        if not path:
+            return
+        got = sf.import_base_camp(path, self.camp_scope())
+        self.var_camp_ok.set(False)
+        self.touch("island imported (%s): %d object(s), %d house(s) -- Save to "
+                   "write it to the file"
+                   % (got["scope"], got["used"], got["houses"]))
+        self.refresh_camp()
+
     def _tab_tools(self, parent):
         f = ttk.Frame(parent, padding=10)
 
@@ -1113,6 +1385,7 @@ class App(ttk.Frame):
         self.refresh_items()
         self.refresh_lives()
         self.refresh_world()
+        self.refresh_camp()
         self.retitle()
 
     def on_lang(self):
@@ -1120,6 +1393,7 @@ class App(ttk.Frame):
         self.refresh_items()
         self.refresh_lives()
         self.refresh_world()
+        self.refresh_camp()
         self.say("names shown in %s" % self.lang())
 
     def refresh_character(self):

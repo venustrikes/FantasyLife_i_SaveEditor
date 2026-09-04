@@ -8,6 +8,8 @@ import struct
 import time
 from typing import Iterable, List, Optional, Tuple
 
+from .basecamp import (BaseCamp, BaseCampError, SCOPES, read_layout,
+                       write_layout)
 from .codec import SaveContainer, SaveCodecError
 from .gvas import GvasHeader
 from .items import (ItemSection, ItemRecord, EMPTY, _fstring_len, heal_core_names,
@@ -98,6 +100,8 @@ class SaveFile:
         self._hugemap: Optional[HugeMap] = None
         self._flags: Optional[SyncFlags] = None
         self._recipes: Optional[RecipeStatus] = None
+        self._camp: Optional[BaseCamp] = None
+        self._camp_error: Optional[str] = None
 
     # ------------------------------------------------------------- lifecycle
     @classmethod
@@ -149,6 +153,8 @@ class SaveFile:
         self._hugemap = None
         self._flags = None
         self._recipes = None
+        self._camp = None
+        self._camp_error = None
 
     # ----------------------------------------------------------------- items
     @property
@@ -194,6 +200,7 @@ class SaveFile:
         self.flush_world()
         self.flush_flags()
         self.flush_recipes()
+        self.flush_base_camp()
         sec = self._items
         if sec is None:
             return
@@ -209,6 +216,8 @@ class SaveFile:
         self._hugemap = None
         self._flags = None
         self._recipes = None
+        self._camp = None
+        self._camp_error = None
 
     def give_item(self, item_id: str, quantity: int = 1,
                   array_index: Optional[int] = None,
@@ -625,6 +634,154 @@ class SaveFile:
         self.flush_recipes()
         return out
 
+    # ------------------------------------------------------------- base camp
+    @property
+    def base_camp(self) -> Optional[BaseCamp]:
+        """The Base Camp island.  None if this save has no block for it."""
+        self.flush_items()
+        if self._camp is None and self._camp_error is None:
+            try:
+                self._camp = BaseCamp(bytes(self.payload))
+            except Exception as exc:              # keep the rest usable
+                self._camp_error = str(exc)
+        return self._camp
+
+    @property
+    def base_camp_error(self) -> Optional[str]:
+        self.base_camp
+        return self._camp_error
+
+    def flush_base_camp(self) -> None:
+        """Write pending island edits back.  Both blocks can change length."""
+        camp = self._camp
+        if camp is None or camp.start < 0:
+            return
+        areas = camp.area_blob
+        if areas != bytes(self.payload[camp.area_start:camp.area_end]):
+            self.payload[camp.area_start:camp.area_end] = areas
+            camp.area_end = camp.area_start + len(areas)
+        blob = camp.pack()
+        if blob == bytes(self.payload[camp.start:camp.end]):
+            return
+        self.payload[camp.start:camp.end] = blob
+        moved = camp.start + len(blob) - camp.end
+        camp.end = camp.start + len(blob)
+        camp.area_start += moved
+        camp.area_end += moved
+        # the recipe table and Ginormosia sit behind the island
+        self._recipes = None
+        self._hugemap = None
+
+    def craft_name(self, item_id: Optional[str], language: str = "en") -> str:
+        """Name a placed object, allowing for the suffixes its ids carry.
+
+        Craft ids come with variants the text tables do not list -- a bridge as
+        ``icf03020010_03``, an upgraded house as ``icf01020040_extension_2`` --
+        so a miss falls back to the id before the underscore and keeps the
+        suffix as a note.
+        """
+        if not item_id:
+            return ""
+        name = self.item_name(item_id, language)
+        if name or "_" not in item_id:
+            return name
+        stem, _, suffix = item_id.partition("_")
+        name = self.item_name(stem, language)
+        if name and not suffix.isdigit():
+            name = "%s (%s)" % (name, suffix.replace("_", " "))
+        return name
+
+    def base_camp_rows(self, kind: str = "furniture",
+                       language: str = "en") -> List[dict]:
+        """One row per kind of thing on the island: its name and how many."""
+        camp = self.base_camp
+        if camp is None:
+            return []
+        rows = []
+        for obj_id, count, item_id in camp.tally(kind):
+            name = self.craft_name(item_id, language)
+            rows.append({"id": obj_id, "item": item_id, "count": count,
+                         "name": name or obj_id})
+        return rows
+
+    def house_rows(self, language: str = "en") -> List[dict]:
+        """One row per house on the island, with where its building stands."""
+        camp = self.base_camp
+        if camp is None:
+            return []
+        rows = []
+        for h in camp.houses:
+            if not h.used:
+                continue
+            obj = camp.object_for(h)
+            rows.append({
+                "slot": h.slot,
+                "kind": h.category_name,
+                "id": h.house_data,
+                "name": self.craft_name(h.item_id, language) or h.house_data,
+                "entrance": h.entrance_map,
+                "rooms": len(h.indoor_areas),
+                "position": obj.location if obj else None,
+                "rotation": obj.rotation[1] if obj else None,
+            })
+        return rows
+
+    def export_base_camp(self, path: str, *, note: str = "") -> dict:
+        """Write this island out as a shareable layout file."""
+        camp = self.base_camp
+        if camp is None:
+            raise RuntimeError("this save has no Base Camp block (%s)"
+                               % (self._camp_error or "not found"))
+        doc = camp.to_document(build=self.header.build_id, note=note)
+        # A layout that cannot be read back into the same bytes is a layout
+        # that would not import cleanly, so check before it reaches anyone.
+        if BaseCamp.from_document(doc).pack() != camp.pack():
+            raise BaseCampError("the exported layout does not match the save")
+        size = write_layout(path, doc)
+        out = dict(doc["summary"])
+        out["bytes"] = size
+        out["path"] = path
+        return out
+
+    def import_base_camp(self, path: str, scope: str = "all") -> dict:
+        """Read a layout file into this save.
+
+        *scope* is ``all`` -- the whole island, houses and room interiors
+        included -- or ``terrain`` for just the ground, water, cliffs and
+        roads, or ``objects`` for everything standing on it.  The two partial
+        scopes re-slot the object pool, which is safe because nothing outside
+        the block points into it.
+        """
+        if scope not in SCOPES:
+            raise ValueError("scope must be one of %s" % (", ".join(SCOPES),))
+        camp = self.base_camp
+        if camp is None:
+            raise RuntimeError("this save has no Base Camp block (%s)"
+                               % (self._camp_error or "not found"))
+        other = BaseCamp.from_document(read_layout(path))
+        if len(other.objects) != len(camp.objects):
+            raise BaseCampError(
+                "that layout has a %d slot object pool and this save has %d"
+                % (len(other.objects), len(camp.objects)))
+        if scope == "all":
+            camp.objects = other.objects
+            camp.land = other.land
+            camp.houses = other.houses
+            camp.stands = other.stands
+            camp.pools = other.pools
+            camp.header = other.header
+            camp.version = other.version
+            camp.area_blob = other.area_blob
+            out = {"kept": 0, "added": len(other.used)}
+        elif scope == "terrain":
+            out = camp.replace_terrain(other)
+        else:
+            out = camp.replace_objects(other)
+        self.flush_base_camp()
+        out["scope"] = scope
+        out.update(camp.counts())
+        return out
+
     # ------------------------------------------------------------- character
     @property
     def character(self):
@@ -648,6 +805,8 @@ class SaveFile:
         self._hugemap = None
         self._flags = None
         self._recipes = None
+        self._camp = None
+        self._camp_error = None
 
     def set_vital(self, field: str, value: int) -> None:
         """Write one of hp / hp_max / sp / sp_max."""

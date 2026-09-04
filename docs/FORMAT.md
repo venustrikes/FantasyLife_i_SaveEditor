@@ -112,7 +112,8 @@ is a flat little-endian sequence of primitives with UE `FString`s
 | `0x02849A`–`0x0E3086` | **item containers** (see below) |
 | `0x0E3086`–`0x0F8000` | quests: `qm*`, `qsa_life*`, `qsb*`, `qsd_*`, `qsf_active_event_*`, `qsf_rogue_event_*` |
 | `0x0F7FDE`–`0x0F8A80` | **character block**: avatar params, HP/MaxHP/SP/MaxSP, name, current Life, the per-Life arrays, equipped models |
-| `0x0FB1C0`–`0x190B20` | world object state (`land_obj*`, `water_obj*`, `Connect_All*`) — the bulk of the file |
+| `0x0FB153`–`0x669302` | **the Base Camp island** (magic `0x301BD677`): 65535 object slots plus their ex-parameters — the bulk of the file, see §9 |
+| `0x669302`–`0x699F13` | the island's areas and room interiors (magic `0x566F4529`) |
 | `0x6A0000`–`0x780000` | map gathering points (`grp_wood_*`, `pick_map_fish_*`, …) |
 | `0x788F57`–`0x798FEE` | **which recipes are known** (`recipe_life*`, magic `0x31CCCDDC`) — see §5 |
 | `0x79A223`+ | shops, shrines, NPC data |
@@ -703,7 +704,167 @@ Rank and points do drift apart in a real save — one far-progressed area holds
 only bumped when the game shows the rank-up notification
 (`ENotificationMenuType::HugeMapAreaRankUp`). The editor writes both.
 
-## 9. Re-encoding notes
+## 9. The Base Camp island
+
+Everything the player builds, digs, floods and places on the island in the
+present is one system, which the executable calls **CraftObj**. It sits in two
+consecutive blocks of the payload, each found by its own magic:
+
+| Magic | What it holds | Size in a real save |
+|---|---|---|
+| `0x301BD677` | `CraftStatusInfoP` — the object pool and its ex-parameters | ~5.4 MB |
+| `0x566F4529` | `CraftAreaStatusP` — the areas, the rooms and their interiors | ~154 KB |
+| `0xBD771C57` | the block after them, which is what bounds the second | — |
+
+Each magic occurs **exactly once** in the payload, on every build seen (Steam
+December 2025 `rev104282`, Switch June `rev94200`, iOS), so the pair is located
+by search and never by offset. Together they are 70 % of the file, which is why
+an 8 MB save holds a 6,600-object island.
+
+### The object block
+
+```
+uint32  0x301BD677
+uint32  version                  4 everywhere so far
+byte    header[86]               see below
+uint32  objectCount              65535 — a fixed pool, mostly empty
+objectCount x CraftObjStatusP
+uint32  landCount                10240
+landCount x  { uint32 handle; FName tileID; uint32 }
+uint32  houseCount               32
+houseCount x CraftObjExParamHouse
+uint32 n;  n x  8 bytes          CraftObjExParamPickPoint
+uint32 n;  n x    variable       CraftObjExParamStand
+uint32 n;  n x  8 bytes          CraftObjExParamPlantDungeon
+uint32 n;  n x  8 bytes          CraftObjExParamVegetableField
+uint32 n;  n x 24 bytes          CraftObjExParamPlannedConstruct
+```
+
+The seven pools after the objects are `CraftExParamP`'s seven arrays in
+declaration order — `exParamLand, exParamHouse, exParamPickPoint,
+exParamStand, exParamPlantDungeon, exParamVegetableField,
+exParamPlannedConstruct`. That is how the shape was settled rather than
+guessed: the block has to end exactly on the next magic, and this is the only
+reading of it that does, on every save tried.
+
+### The object record
+
+`CraftObjStatusP`, in the order the generated UE property table declares it:
+
+```
+uint32   handle           slot | ((slot + 1) & 0xFF) << 24
+uint32   exParamHandle    0, or  index | kind << 16 | 0xFF << 24
+FName    craftObjId
+FName    viewPatternId
+double   location   x, y, z
+double   rotation   pitch, yaw, roll
+int32    gridIdx
+uint32   mapId            an FName hash; 0x6BBD96BB is Map_000100, the camp
+uint8    objStatusBitFlag ECraftObjStatusBitFlag: 1 Shave, 2 Put
+```
+
+83 bytes for an empty slot, 90 for a land tile. An unused slot is the same
+record every time: both names `"None"`, `gridIdx` **-1** and everything else
+zero — which is what lets an exported layout list only the slots in use and
+still rebuild the block to the byte.
+
+The two leading handles are what made the record hard to frame. They belong to
+the record that *follows* them, not the one before, and reading them the other
+way round still parses all 65,535 records — it just leaves the block eight
+bytes long and the land pool without its count. `exParamHandle`'s `kind` byte
+is the index of the ex-parameter pool it points into, so `0xFF000004` is land
+entry 4 and `0xFF010001` is house entry 1.
+
+### What the ids mean
+
+`land_obj` and `water_obj` are the terrain itself, one record per tile on a
+100-unit grid, and `viewPatternId` is how that tile is drawn: `Connect_All`
+where it has neighbours all round, `Default` where it does not, and
+`Scraped_UL` / `UR` / `DL` / `DR` for the four ways a corner can be cut away —
+which is what a sculpted cliff is made of. Height is the tile's Z, and a save
+uses three of them. The full list of ground types the game knows is
+`blank_obj`, `land_obj`, `water_obj`, `waterfall_obj`, `land_desert_obj`,
+`land_rock_obj` and their `h_` indoor counterparts.
+
+Everything else names an item id after its prefix, so the text database names
+it with no extra table:
+
+| Prefix | What it is | Example |
+|---|---|---|
+| `obj_ico…` | furniture and decoration | `obj_ico04080010` → `ico04080010`, *Green Grass* |
+| `obj_icf…` | structures: houses, squares, bridges, stairs | `obj_icf01020030` → *Thatched House* |
+| `obj_limit_…` | invisible area markers (`window`, `way`) | — |
+| `obstacle_NN` | the boulders, debris and big trees in the way | — |
+| `house_…` | a building's row in the house pool | `house_icf01020030` |
+
+Ids carry variant suffixes the text tables do not list — `icf03020010_03` is a
+*Wooden Bridge*, `icf01020040_extension_2` a *Big Thatched House* that has been
+extended — so a name lookup that misses falls back to the id before the
+underscore.
+
+**A road is not an object.** A path is a *land* tile carrying a land
+ex-parameter whose `tileID` is the road item: `obj_icf05010040`, *Swolean
+Road*. That is why the land pool travels with the terrain rather than with the
+objects.
+
+### Houses
+
+`CraftObjExParamHouse` is what turns a placed building into a home:
+
+```
+uint32   handle
+uint32 n;  n x uint32   indoorAreaStHdl        the rooms inside it
+FName    placedMapId    the map it stands on — "Map_000100" is the Base Camp
+FName    entranceMapId  where its door leads
+FName    refAreaId
+FName    houseDataId    "house_icf01020030"
+uint8    houseCategory  ECraftHouseCategory: 1 player, 2 inhabitant,
+                                             3 guild, 4 gallery
+uint32   -
+```
+
+`entranceMapId` is the useful field: `Map_MyHouse` is the player's own house,
+`NPCRoom_00xxxx` an inhabitant's, `Map_5000xx` the Guild office or the gallery.
+The record does **not** store a position — the building that *is* the house is
+the object whose `exParamHandle` points at it, so the player's house position
+is that object's `location`.
+
+### The header
+
+86 bytes sit between the version and the pool count and are carried through
+untouched. Three quarters of them are constant on every save seen: an FString
+`"chr100400"`, then 32 bytes that end with `uint32 65535` — the pool capacity
+again. The 52 bytes before the name are four 13-byte records, the first
+constant and the other three carrying a small triple and an index; they change
+as the island is built up (a save with one house has all three empty, one with
+three houses has one to three of them filled) but what they count is not
+identified. They move with the island, so a layout import brings them along.
+
+### The area block
+
+`CraftAreaStatusP` holds five lists — map, outdoor, indoor, wall and ceiling
+areas — and the indoor ones carry each room's `childIndoorPartsInfoArray`, the
+wallpaper and flooring design ids (`ide_thatch_00`) and the room's own name
+(`room_6_6`, `npc_empty_room_10_10`). The houses in the block above point into
+it by index, so the two are only consistent together; the editor parses the
+first block and carries the second verbatim, which keeps houses and their
+interiors inseparable without needing to model five more struct shapes.
+
+### Sharing an island
+
+`flisave/basecamp.py` exports both blocks as one gzipped JSON document
+(`.flicamp`, about 80 KB for a full island): the used object slots, the used
+land tiles, the house pool, the small ex-parameter pools and the area block as
+base64. Nothing outside the two blocks points into them, so an import can
+replace them outright.
+
+The pool is addressed by slot and every handle is derived from that slot, which
+is what makes a *partial* import possible as well: the kept objects and the
+incoming ones are laid down together from slot 0 and every handle is rewritten
+from its new position. Terrain-only and objects-only imports do that; each
+takes the ex-parameter pools its half refers to, and leaves the others alone.
+
+## 10. Re-encoding notes
 
 * zlib level does not matter — the loader inflates whatever valid stream it
   finds and checks the result against the stored uncompressed size. The editor
@@ -714,7 +875,7 @@ only bumped when the game shows the rank-up notification
   so inserting or removing bytes (for example a longer item id) is safe as
   long as the surrounding structure is re-serialised consistently.
 
-## 10. Icons and other art
+## 11. Icons and other art
 
 Item names come from the text DataTables (section 3); the art comes from
 cooked `UTexture2D` packages under `Game/Content/Graphics/2D/UI/Icon/`. In the

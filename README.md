@@ -26,9 +26,11 @@ The two are the same editor: the browser build is a port of this Python one,
 held to it byte for byte by a fixture suite that replays a fixed list of edits
 on three real saves and compares SHA-256 of the payload after each — 136 checks.
 
-What the page does **not** have is the value hunter (*Find / Edit values*), the
-Cheat-Engine-style tool for whatever is still unmapped. That one is desktop
-only, and it is the reason to run the Python editor below.
+What the page does **not** have yet is the **Base Camp** tab — export and
+import a whole island layout, see [below](#base-camp-share-your-island) — or
+the value hunter (*Find / Edit values*), the Cheat-Engine-style tool for
+whatever is still unmapped. Both are desktop only, and they are the reason to
+run the Python editor below.
 
 ## What it supports
 
@@ -112,6 +114,11 @@ python fli_gui.py path\to\002DAE74-00-gamedata.bin
 * **Lives** — level, EXP, rank and PA (the ability points a Life spends on its
   abilities) for all fourteen Lives, each with its emblem. Rank is a dropdown
   of the game's own rank names. Apply to one Life or to every Life at once.
+* **Base Camp** — the island: what is built and placed on it, by name, and
+  every house with where its building stands. **Export layout...** writes the
+  whole island to one ~80 KB file and **Import layout...** puts someone else's
+  into your save, all of it or just the terrain. See
+  [Base Camp](#base-camp-share-your-island).
 * **Find / Edit values** — a Cheat-Engine-style hunter for whatever is still
   unmapped, plus direct read/write and a hex dump.
 
@@ -132,6 +139,7 @@ python fli.py ids        <save>                          # item ids present
 python fli.py lives      <save>                          # per-Life table
 python fli.py boards     <save>                          # bulletin boards
 python fli.py ginormosia <save>                          # areas + shrines
+python fli.py basecamp   <save>                          # the island
 python fli.py money      <save>                          # show the wallet
 python fli.py search     "potion" [--lang it]            # item name -> item id
 
@@ -153,6 +161,8 @@ python fli.py set-life   <save> --life all --level 99    # every Life at once
 python fli.py boards     <save> --complete base          # finish one board
 python fli.py boards     <save> --complete all           # finish every board
 python fli.py ginormosia <save> --unlock                 # camps + ranks + shrines
+python fli.py basecamp   <save> --export island.flicamp  # share the island
+python fli.py basecamp   <save> --import island.flicamp  # ... or take one
 
 python fli.py find       <save> --value 12345 --type u32 # offsets holding it
 python fli.py scan       <save> --value 12345            # all widths at once
@@ -266,6 +276,67 @@ python fli.py ginormosia <save> --area 3 --rank 5           # just that one
 python fli.py ginormosia <save> --area map200000_area007 --rank 2 --points 555
 python fli.py ginormosia <save> --area all --points 0       # ranks left alone
 ```
+
+## Base Camp: share your island
+
+The island in the present is one self-contained block of the save — the ground
+you sculpted, the water and the cliff faces you cut into it, the roads you
+laid, the buildings, the houses and every piece of furniture standing on them.
+The editor can lift the whole thing out into one small file and put it back
+into someone else's save.
+
+```
+python fli.py basecamp <save>                              # what is on it
+python fli.py basecamp <save> --kind buildings             # or terrain, roads,
+python fli.py basecamp <save> --export island.flicamp      #    furniture,
+python fli.py basecamp <save> --import island.flicamp      #    obstacles
+python fli.py basecamp <save> --import island.flicamp --scope terrain
+```
+
+or the **Base Camp** tab in the window, which shows what is on the island by
+name — *Green Grass*, *Paint Bucket*, *Thatched House* — lists every house with
+where its building stands, and has **Export layout...** / **Import layout...**
+side by side.
+
+An export is about **80 KB** for a full island. It is gzipped JSON, so a
+`.json` file name gives you the readable version instead, and either one
+imports.
+
+### What comes across
+
+| | |
+|---|---|
+| **Terrain** | every ground and water tile, its height, and the sculpted corners that make a cliff |
+| **Roads** | the tiles laid over the ground (*Swolean Road* and the rest) |
+| **Buildings** | houses, squares, bridges, stairs — position and facing |
+| **Furniture** | everything placed on top, position and facing |
+| **Houses** | which building is whose home, the player's own included, and the rooms inside them with their wallpaper and flooring |
+| **Obstacles** | the boulders, debris and big trees still in the way |
+
+### Bringing across only part of it
+
+`--scope` (the **bring across** dropdown) decides how much:
+
+* **everything** — replaces the island outright. This is the one that gives you
+  the layout exactly as it was exported.
+* **terrain only** — the ground, water, cliffs and roads; your own buildings and
+  furniture stay where they are. They keep their old positions, so anything that
+  stood on ground the new terrain does not have is left floating or buried.
+* **objects only** — the buildings, furniture, obstacles, houses and room
+  interiors; your own ground and water are left alone.
+
+Objects live in a flat pool of 65,535 slots and nothing outside the block points
+into it, so a partial import re-lays the pool from slot 0 and rewrites every
+handle from its new position. That is checked on three real saves in
+`research/selftest.py`, both directions, and each result is written, reloaded
+and compared.
+
+**Close the game before swapping the file in.** A running game overwrites the
+save on its next autosave, which looks exactly like "the import did nothing".
+
+An imported island is the island — it does not hand you the items or the quest
+progress that would have built it, and an inhabitant whose house arrives before
+you have met them is a house with nobody in it.
 
 ## Item and Life names
 
@@ -547,6 +618,7 @@ flisave/items.py     item container parser / serialiser
 flisave/gear.py      per-grade equipment stats (reads data/fli_gear.json.gz)
 flisave/lives.py     per-Life arrays
 flisave/world.py     bulletin boards and Ginormosia
+flisave/basecamp.py  the Base Camp island, and layout export/import
 flisave/character.py the character block: name, HP/SP, current Life
 flisave/hunt.py      progressive value hunting
 flisave/names.py     name/description lookup (reads data/fli_text.json.gz)

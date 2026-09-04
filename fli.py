@@ -11,6 +11,9 @@
     python fli.py money      <save> [--set 99999] [--gift N] [--cashnuts N] [-o out]
     python fli.py set-life   <save> [--life life0001|all] --level 99 --exp 0 [-o out]
     python fli.py recipes    <save> [--learn all|blacksmith|10 ...] [--forget] [-o out]
+    python fli.py basecamp   <save> [--kind furniture|buildings|terrain|roads|...]
+    python fli.py basecamp   <save> --export island.flicamp [--note "my island"]
+    python fli.py basecamp   <save> --import island.flicamp [--scope all|terrain|objects]
     python fli.py give       <save> --id ics01000780 --qty 99 [-o out]
     python fli.py give       <save> --id iwp02000220 [--title 5]
     python fli.py give       <save> --id ilt01000120 --super-op
@@ -39,6 +42,7 @@ import sys
 
 from flisave.codec import SaveContainer, decode_file
 from flisave.hunt import Hunt, scan_all_types
+from flisave.basecamp import SCOPES
 from flisave.save import SaveFile, CURRENCIES
 from flisave.world import BOARDS, BOARD_BY_KEY, MAX_RANK, TOWER_COUNT
 from flisave import gear, items, names as namedb, recipes as reciped
@@ -154,6 +158,43 @@ def cmd_recipes(args):
     print("bag filled on its own leaves the bench with nothing new in it.")
     print("A bench still groups its list by Life rank, so a Life left at rank 0")
     print("shows a short list however many recipes are known.")
+
+
+def cmd_basecamp(args):
+    sf = SaveFile.load(args.save, verify=not args.no_verify)
+    camp = sf.base_camp
+    if camp is None:
+        sys.exit("this save has no Base Camp block (%s)" % sf.base_camp_error)
+    if args.export:
+        got = sf.export_base_camp(args.export, note=args.note or "")
+        print("written: %s (%.1f KB)" % (got["path"], got["bytes"] / 1024.0))
+        print("  %d objects, %d houses, %d bytes of room interiors"
+              % (got["used"], got["houses"], got["areas"]))
+        return
+    if getattr(args, "import_"):
+        got = sf.import_base_camp(args.import_, args.scope)
+        print("imported (%s): %d object(s) now on the island, %d house(s)"
+              % (got["scope"], got["used"], got["houses"]))
+        _save_out(sf, args)
+        return
+
+    c = camp.counts()
+    print("Base Camp -- %d of %d object slots in use" % (c["used"], c["slots"]))
+    print("  ground %d, water %d, cliff faces %d, %d height level(s), roads %d"
+          % (c["ground"], c["water"], c["cliffs"], c["levels"], c["roads"]))
+    print("  buildings %d, furniture %d, obstacles %d, houses %d"
+          % (c["buildings"], c["furniture"], c["obstacles"], c["houses"]))
+    print()
+    print("%-11s %-30s %-22s %s"
+          % ("whose", "house", "door leads to", "standing at"))
+    for h in sf.house_rows(args.lang):
+        pos = ("%.0f, %.0f, %.0f" % h["position"]) if h["position"] else "-"
+        print("%-11s %-30s %-22s %s"
+              % (h["kind"], h["name"][:30], h["entrance"], pos))
+    print()
+    print("%-22s %6s  %s" % (args.kind, "count", "name"))
+    for r in sf.base_camp_rows(args.kind, args.lang):
+        print("%-22s %6d  %s" % (r["id"], r["count"], r["name"]))
 
 
 def cmd_boards(args):
@@ -560,6 +601,28 @@ def main(argv=None):
                    help='flag them "NEW!" the way a freshly learned one is')
     s.add_argument("-o", "--out")
     s.set_defaults(f=cmd_recipes)
+
+    s = sub.add_parser("basecamp", help="the Base Camp island: what is built on "
+                                        "it, and export or import a whole "
+                                        "layout to share it")
+    s.add_argument("save")
+    s.add_argument("--kind", default="furniture",
+                   choices=["furniture", "buildings", "obstacles", "markers",
+                            "terrain", "roads"],
+                   help="which family of objects to list (default: furniture)")
+    s.add_argument("--export", metavar="FILE",
+                   help="write the island out as a shareable layout file; a "
+                        ".json name stays readable, anything else is gzipped")
+    s.add_argument("--import", dest="import_", metavar="FILE",
+                   help="read a layout file into this save, replacing what is "
+                        "there")
+    s.add_argument("--scope", default="all", choices=list(SCOPES),
+                   help="how much of the layout to bring across: all of it, "
+                        "just the terrain (ground, water, cliffs, roads) or "
+                        "just the objects standing on it")
+    s.add_argument("--note", help="a line of your own to store in the export")
+    s.add_argument("-o", "--out")
+    s.set_defaults(f=cmd_basecamp)
 
     s = sub.add_parser("boards", help="bulletin boards: show them, or finish "
                                       "every job on one so its level maxes out")
