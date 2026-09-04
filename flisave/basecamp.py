@@ -95,6 +95,7 @@ import base64
 import datetime
 import gzip
 import json
+import math
 import struct
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -147,6 +148,17 @@ class BaseCampError(Exception):
 
 def _u32(v: int) -> bytes:
     return struct.pack("<I", v & 0xFFFFFFFF)
+
+
+def _neg_zero(v: float) -> bool:
+    """True for -0.0, which JSON cannot tell from 0.0 in every language.
+
+    Python writes ``-0.0`` and reads it back; JavaScript's ``JSON.stringify``
+    turns it into ``0``.  Four objects in one real save carry a negative zero
+    rotation, so rather than trust the number the exporter lists them on the
+    side and both implementations put the sign back.
+    """
+    return v == 0.0 and math.copysign(1.0, v) < 0
 
 
 def ex_param_pool(handle: int) -> Optional[str]:
@@ -583,10 +595,18 @@ class BaseCamp:
                                   "flags", "handle"],
                 "objects": [
                     [o.slot, o.ex_param, o.obj_id, o.view_pattern,
-                     o.location[0], o.location[1], o.location[2],
-                     o.rotation[0], o.rotation[1], o.rotation[2],
+                     o.location[0] + 0.0, o.location[1] + 0.0,
+                     o.location[2] + 0.0, o.rotation[0] + 0.0,
+                     o.rotation[1] + 0.0, o.rotation[2] + 0.0,
                      o.grid_idx, o.map_id, o.flags, o.handle]
                     for o in self.objects if not o.blank
+                ],
+                # (slot, which of x y z pitch yaw roll) for every -0.0
+                "negative_zeros": [
+                    [o.slot, k]
+                    for o in self.objects if not o.blank
+                    for k, v in enumerate(tuple(o.location) + tuple(o.rotation))
+                    if _neg_zero(v)
                 ],
                 "land_capacity": len(self.land),
                 "land_fields": ["slot", "tileId", "extra", "handle"],
@@ -640,6 +660,12 @@ class BaseCamp:
                 rotation=(row[7], row[8], row[9]),
                 grid_idx=row[10], map_id=row[11], flags=row[12],
                 handle=row[13] if len(row) > 13 else None)
+
+        for slot, k in c.get("negative_zeros", ()):
+            o = self.objects[slot]
+            vals = list(o.location) + list(o.rotation)
+            vals[k] = -0.0
+            o.location, o.rotation = tuple(vals[:3]), tuple(vals[3:])
 
         self.land = [LandParam(slot=s) for s in range(c["land_capacity"])]
         for row in c["land"]:

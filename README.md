@@ -19,18 +19,20 @@ way in:
 No server and no upload — the save is read, edited and written inside the tab,
 on your own machine. It covers the Items tab (containers, grades, vintages,
 **Super OP Weapon Mode**, bulk fills, gear repair), the character name and
-vitals, the wallet, the Lives (level, EXP, rank, PA) and the World (bulletin
-boards, Ginormosia, the eye towers).
+vitals, the wallet, the Lives (level, EXP, rank, PA), the World (bulletin
+boards, Ginormosia, the eye towers) and the **Base Camp** island, layout
+export and import included.
 
 The two are the same editor: the browser build is a port of this Python one,
 held to it byte for byte by a fixture suite that replays a fixed list of edits
-on three real saves and compares SHA-256 of the payload after each — 136 checks.
+on three real saves and compares SHA-256 of the payload after each — 212 checks.
+Island layouts go further: the fixtures write real `.flicamp` files and the
+TypeScript side reads those very bytes, so a layout exported from either editor
+imports into the other.
 
-What the page does **not** have yet is the **Base Camp** tab — export and
-import a whole island layout, see [below](#base-camp-share-your-island) — or
-the value hunter (*Find / Edit values*), the Cheat-Engine-style tool for
-whatever is still unmapped. Both are desktop only, and they are the reason to
-run the Python editor below.
+What the page does **not** have is the value hunter (*Find / Edit values*), the
+Cheat-Engine-style tool for whatever is still unmapped. That one is desktop
+only, and it is the reason to run the Python editor below.
 
 ## What it supports
 
@@ -293,10 +295,11 @@ python fli.py basecamp <save> --import island.flicamp      #    obstacles
 python fli.py basecamp <save> --import island.flicamp --scope terrain
 ```
 
-or the **Base Camp** tab in the window, which shows what is on the island by
-name — *Green Grass*, *Paint Bucket*, *Thatched House* — lists every house with
-where its building stands, and has **Export layout...** / **Import layout...**
-side by side.
+or the **Base Camp** tab in either editor — the desktop window and the
+[browser build](#browser-version) both have it — which shows what is on the
+island by name (*Green Grass*, *Paint Bucket*, *Thatched House*), lists every
+house with where its building stands, and puts **Export layout...** and
+**Import layout...** side by side.
 
 An export is about **80 KB** for a full island. It is gzipped JSON, so a
 `.json` file name gives you the readable version instead, and either one
