@@ -735,7 +735,9 @@ class SaveFile:
         doc = camp.to_document(build=self.header.build_id, note=note)
         # A layout that cannot be read back into the same bytes is a layout
         # that would not import cleanly, so check before it reaches anyone.
-        if BaseCamp.from_document(doc).pack() != camp.pack():
+        # A layout carries a *vacant* island -- see BaseCamp.vacant_houses --
+        # so that, and not the save's own occupancy, is what it must rebuild.
+        if BaseCamp.from_document(doc).pack() != camp.packed_vacant():
             raise BaseCampError("the exported layout does not match the save")
         size = write_layout(path, doc)
         out = dict(doc["summary"])
@@ -751,6 +753,10 @@ class SaveFile:
         roads, or ``objects`` for everything standing on it.  The two partial
         scopes re-slot the object pool, which is safe because nothing outside
         the block points into it.
+
+        Whatever the scope, a layout never hands over a house *level*: your own
+        house, the Guild office and the gallery keep the building this save has
+        and only move to where the layout puts them.
         """
         if scope not in SCOPES:
             raise ValueError("scope must be one of %s" % (", ".join(SCOPES),))
@@ -759,6 +765,7 @@ class SaveFile:
             raise RuntimeError("this save has no Base Camp block (%s)"
                                % (self._camp_error or "not found"))
         other = BaseCamp.from_document(read_layout(path))
+        kept = camp.keep_own_buildings(other) if scope != "terrain" else []
         if len(other.objects) != len(camp.objects):
             raise BaseCampError(
                 "that layout has a %d slot object pool and this save has %d"
@@ -779,6 +786,7 @@ class SaveFile:
             out = camp.replace_objects(other)
         self.flush_base_camp()
         out["scope"] = scope
+        out["kept_levels"] = kept
         out.update(camp.counts())
         return out
 

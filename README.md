@@ -334,12 +334,25 @@ handle from its new position. That is checked on three real saves in
 `research/selftest.py`, both directions, and each result is written, reloaded
 and compared.
 
+### Two things a layout deliberately leaves behind
+
+**Villagers.** A house records its resident by chara id, and residents belong to
+the save they live in, so an export moves everyone out: villager houses arrive
+**empty**, the way a freshly built one starts, ready for you to move your own
+inhabitants in. (An island shared with the residents still in it reads back in
+game as houses with a blank name that never appear in *Manage inhabitants*.)
+
+**House levels.** Your own house, the Guild office and the gallery each carry
+their level in the building they are — a *Thatched House* against a *Big
+Thatched House*, a thatched Guild office against a rebuilt one. An import moves
+those three where the layout puts them and leaves them at the level you have; it
+will not promote or demote them. The editor says which ones it held back.
+
 **Close the game before swapping the file in.** A running game overwrites the
 save on its next autosave, which looks exactly like "the import did nothing".
 
 An imported island is the island — it does not hand you the items or the quest
-progress that would have built it, and an inhabitant whose house arrives before
-you have met them is a house with nobody in it.
+progress that would have built it.
 
 ## Item and Life names
 

@@ -175,6 +175,8 @@ def cmd_basecamp(args):
         got = sf.import_base_camp(args.import_, args.scope)
         print("imported (%s): %d object(s) now on the island, %d house(s)"
               % (got["scope"], got["used"], got["houses"]))
+        for note in got["kept_levels"]:
+            print("  %s" % note)
         _save_out(sf, args)
         return
 

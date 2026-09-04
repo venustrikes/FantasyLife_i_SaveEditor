@@ -829,6 +829,38 @@ The record does **not** store a position — the building that *is* the house is
 the object whose `exParamHandle` points at it, so the player's house position
 is that object's `location`.
 
+### Occupied and empty are one field
+
+The area block calls a villager's room `NPCEmptyRoom_NN` **whether anyone lives
+in it or not**. Moving a villager in rewrites exactly one thing: the house
+record's `entranceMapId`, from `NPCEmptyRoom_NN` to `NPCRoom_00xxxx`, naming the
+resident's chara. A save with one of each proves it — the occupied house at
+slot 2 points at `NPCRoom_002500` while the area block still names its room
+`NPCEmptyRoom_00`, and the empty one at slot 3 points at `NPCEmptyRoom_01`.
+
+That matters for sharing, because a resident belongs to the save they live in:
+the assignment itself is `craftAreaInhabitantInfo` (`{ handles[]; uint16
+inhabitantKey }`), which lives outside both of these blocks. An island imported
+with `NPCRoom_00xxxx` still in it claims villagers the receiving game has never
+met, and in game those houses come out with a **blank name**, never appear in
+*Manage inhabitants*, and read `<CHARA_NAME>` where the resident should be. So
+an export moves everyone out — each inhabitant house's `entranceMapId` becomes
+the `NPCEmptyRoom_NN` its own room is called, numbered in house order — which is
+exactly the state a freshly built house is in.
+
+### A house's level is the building it is
+
+There is no level field. The player's house is `house_icf01020030` until it is
+extended and `house_icf01020040_extension_2` after, and the object under it goes
+from `obj_icf01020030` to `obj_icf01020040`; the Guild office is
+`house_guild_thatch` before it is rebuilt and `house_guild` after, with its
+entrance moving from `Map_500001` to `Map_500011`. The gallery is the same kind
+of thing.
+
+Those three are progress, not layout, so an import moves them and does not
+regrade them: where both islands have one, the incoming house takes the position
+the layout gives it and keeps the building the receiving save already had.
+
 ### The header
 
 86 bytes sit between the version and the pool count and are carried through

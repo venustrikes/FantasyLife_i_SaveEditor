@@ -96,6 +96,7 @@ import datetime
 import gzip
 import json
 import math
+import re
 import struct
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -120,8 +121,20 @@ FIXED_POOLS = {"pick": 8, "plant_dungeon": 8, "vegetable_field": 8,
 STAND_ENTRY = 16               # one standPlaceInfoMap pair
 
 #: ``ECraftHouseCategory`` as the saves use it.
-HOUSE_CATEGORIES = {0: "none", 1: "player", 2: "inhabitant", 3: "guild",
-                    4: "gallery"}
+HOUSE_PLAYER, HOUSE_INHABITANT, HOUSE_GUILD, HOUSE_GALLERY = 1, 2, 3, 4
+HOUSE_CATEGORIES = {0: "none", HOUSE_PLAYER: "player",
+                    HOUSE_INHABITANT: "inhabitant", HOUSE_GUILD: "guild",
+                    HOUSE_GALLERY: "gallery"}
+
+#: the houses that are progress rather than layout.  Your own house, the Guild
+#: office and the gallery each carry a level -- the house you extended, the
+#: office you rebuilt -- and a shared island has no business handing one over.
+LEVELLED = (HOUSE_PLAYER, HOUSE_GUILD, HOUSE_GALLERY)
+
+#: an occupied villager house names the resident's chara room; an empty one
+#: names the room itself, which is what the area block calls it either way.
+NPC_ROOM = re.compile(r"NPCRoom_[0-9A-Fa-f]+\Z")
+EMPTY_ROOM = re.compile(r"NPCEmptyRoom_\d+\Z")
 
 #: every craftObjId the game treats as ground rather than as a thing on it.
 TERRAIN_IDS = frozenset((
@@ -148,6 +161,27 @@ class BaseCampError(Exception):
 
 def _u32(v: int) -> bytes:
     return struct.pack("<I", v & 0xFFFFFFFF)
+
+
+def _fnames(blob: bytes) -> List[str]:
+    """Every plausible FString in a blob, in the order they appear.
+
+    Used only to read the room names out of the area block, which the editor
+    otherwise carries verbatim; the pattern the caller matches against is
+    specific enough that a false positive cannot be mistaken for one.
+    """
+    out: List[str] = []
+    i, n = 0, len(blob)
+    while i < n - 4:
+        ln = struct.unpack_from("<i", blob, i)[0]
+        if 2 <= ln <= 128 and i + 4 + ln <= n:
+            raw = blob[i + 4:i + 4 + ln]
+            if raw[-1] == 0 and all(32 <= c < 127 for c in raw[:-1]):
+                out.append(raw[:-1].decode("ascii"))
+                i += 4 + ln
+                continue
+        i += 1
+    return out
 
 
 def _neg_zero(v: float) -> bool:
@@ -452,6 +486,59 @@ class BaseCamp:
                 return h
         return None
 
+    def houses_of(self, category: int) -> List[House]:
+        return [h for h in self.houses if h.used and h.category == category]
+
+    def empty_room_names(self) -> List[str]:
+        """What the area block calls this island's villager rooms, in order.
+
+        The area block names a room ``NPCEmptyRoom_NN`` whether anyone lives in
+        it or not -- moving a villager in only rewrites the *house* record's
+        ``entranceMapId`` -- so these names are what an empty house points at.
+        """
+        seen: List[str] = []
+        for name in _fnames(self.area_blob):
+            if EMPTY_ROOM.match(name) and name not in seen:
+                seen.append(name)
+        return seen
+
+    def vacant_houses(self) -> List[House]:
+        """The house pool with every villager moved out.
+
+        A house whose ``entranceMapId`` names a chara room belongs to a
+        resident of *that* save, and nobody else has them: the door leads to a
+        villager the receiving game has never heard of, which is why an
+        imported one reads as a blank name and never reaches the *Manage
+        inhabitants* list.  An island is shared empty, the way a freshly built
+        house starts.  Rooms are numbered in house order, and the count has to
+        match what the area block names or the house is left alone.
+        """
+        rooms = self.empty_room_names()
+        order = {h.slot: i for i, h in
+                 enumerate(self.houses_of(HOUSE_INHABITANT))}
+        out = []
+        for h in self.houses:
+            copy = House(h.slot, list(h.indoor_areas), h.placed_map,
+                         h.entrance_map, h.ref_area, h.house_data, h.category,
+                         h.extra, h.handle)
+            n = order.get(h.slot)
+            if n is not None and NPC_ROOM.match(h.entrance_map) and n < len(rooms):
+                copy.entrance_map = rooms[n]
+            out.append(copy)
+        return out
+
+    def packed_vacant(self) -> bytes:
+        """What this island packs to once the villagers are moved out.
+
+        An export carries a vacant island, so this is what a layout of it has
+        to rebuild to.
+        """
+        keep, self.houses = self.houses, self.vacant_houses()
+        try:
+            return self.pack()
+        finally:
+            self.houses = keep
+
     def object_for(self, house: House) -> Optional[CraftObject]:
         """The placed building that carries this house record."""
         want = house.stored_handle()
@@ -519,6 +606,44 @@ class BaseCamp:
         return rows
 
     # ------------------------------------------------------------ editing
+    def keep_own_buildings(self, other: "BaseCamp") -> List[str]:
+        """Stop *other* handing over a house level, in place, before it lands.
+
+        Your own house, the Guild office and the gallery each carry a level in
+        the building they are -- ``house_icf01020030`` against
+        ``house_icf01020040_extension_2``, ``house_guild_thatch`` against
+        ``house_guild`` -- and an imported island should move them, not promote
+        or demote them.  Where both islands have one, *other*'s keeps its
+        position and takes this save's building.  Where only *other* has one it
+        comes across as it is, the same as any other object.
+        """
+        notes = []
+        for category in LEVELLED:
+            mine = self.houses_of(category)
+            theirs = other.houses_of(category)
+            if not mine or not theirs:
+                continue
+            mine_h, theirs_h = mine[0], theirs[0]
+            if (mine_h.house_data == theirs_h.house_data
+                    and mine_h.entrance_map == theirs_h.entrance_map):
+                continue
+            mine_o = self.object_for(mine_h)
+            theirs_o = other.object_for(theirs_h)
+            notes.append("%s: kept %s, not %s"
+                         % (theirs_h.category_name, mine_h.house_data,
+                            theirs_h.house_data))
+            theirs_h.house_data = mine_h.house_data
+            theirs_h.entrance_map = mine_h.entrance_map
+            # An extension adds a room, so a house held back to its own level
+            # keeps its own room count too -- otherwise a Thatched House lands
+            # holding the upstairs of a Big Thatched House.
+            if mine_h.indoor_areas:
+                del theirs_h.indoor_areas[len(mine_h.indoor_areas):]
+            if mine_o is not None and theirs_o is not None:
+                theirs_o.obj_id = mine_o.obj_id
+                theirs_o.view_pattern = mine_o.view_pattern
+        return notes
+
     def replace_terrain(self, other: "BaseCamp") -> Dict[str, int]:
         """Take *other*'s ground, water, cliffs and roads; keep everything else.
 
@@ -619,7 +744,7 @@ class BaseCamp:
                      "refArea": h.ref_area, "houseData": h.house_data,
                      "category": h.category, "extra": h.extra,
                      "handle": h.handle}
-                    for h in self.houses],
+                    for h in self.vacant_houses()],
                 "stands": [{"handle": s.handle,
                             "entries": [base64.b64encode(e).decode()
                                         for e in s.entries]}
