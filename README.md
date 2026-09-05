@@ -328,9 +328,11 @@ imports.
 * **objects only** — the buildings, furniture, obstacles, houses and room
   interiors; your own ground and water are left alone.
 
-Objects live in a flat pool of 65,535 slots and nothing outside the block points
-into it, so a partial import re-lays the pool from slot 0 and rewrites every
-handle from its new position. That is checked on three real saves in
+Objects live in a flat pool of 65,535 slots, and one list outside the block
+points into it — the villager houses the game offers when someone is looking
+for a home. So a partial import re-lays the pool from slot 0, rewrites every
+handle from its new position, and writes that list again from the houses that
+ended up on the island. That is checked on three real saves in
 `research/selftest.py`, both directions, and each result is written, reloaded
 and compared.
 
@@ -341,6 +343,11 @@ the save they live in, so an export moves everyone out: villager houses arrive
 **empty**, the way a freshly built one starts, ready for you to move your own
 inhabitants in. (An island shared with the residents still in it reads back in
 game as houses with a blank name that never appear in *Manage inhabitants*.)
+They arrive *offered*, though — the editor puts them back on the list the game
+reads when someone is looking for a home, so they are there in *Manage
+inhabitants* the first time you look. A save can only list as many as its build
+allows, six on the June Switch build and ten since, and the import says so when
+an island brings more than that.
 
 **House levels.** Your own house, the Guild office and the gallery each carry
 their level in the building they are — a *Thatched House* against a *Big

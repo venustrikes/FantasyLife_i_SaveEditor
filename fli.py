@@ -177,6 +177,12 @@ def cmd_basecamp(args):
               % (got["scope"], got["used"], got["houses"]))
         for note in got["kept_levels"]:
             print("  %s" % note)
+        if got["houses_listed"]:
+            print("  %d villager house(s) ready to move into"
+                  % got["houses_listed"])
+        if got["houses_unlisted"]:
+            print("  %d more than this build can list -- they stand, but "
+                  "nobody can move in" % got["houses_unlisted"])
         _save_out(sf, args)
         return
 

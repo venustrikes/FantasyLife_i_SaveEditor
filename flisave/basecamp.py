@@ -377,6 +377,98 @@ class FixedPool:
         return _u32(len(self.records)) + b"".join(self.records)
 
 
+class HouseRegistry:
+    """The island's villager houses, listed a second time outside the block.
+
+    Building a house writes it twice: once as the object and its
+    ``CraftObjExParamHouse``, and once as a handle in
+    ``craftAreaInhabitantInfo.inhabitantHouseCraftObjStatusHandle`` -- a flat
+    pool in the craft-area NPC block (magic ``0xC0B2C52F``), well past both
+    island blocks and just ahead of the recipe table.  **That pool is the list
+    the game offers you when you send a villager to live somewhere.**  A house
+    missing from it is built, standing and enterable, and can never be moved
+    into.
+
+    Every save read here has the pool's non-zero entries equal to its villager
+    houses, in house order -- seventeen saves across three builds.  An island
+    import that does not rewrite it leaves the pool pointing at the houses of
+    the island it replaced, which in game is a *Manage inhabitants* list with
+    nothing in it, or, where a stale handle happens to land on a new house,
+    exactly one entry.
+
+    Its length is the build's villager cap rather than a count of houses -- 6
+    on the June Switch build, 10 on the December PC and August iOS ones, and
+    the same whether the island has no houses or six -- so a rewrite keeps the
+    length it found and never moves a byte of what follows.  :meth:`sync` says
+    what that costs an island bringing more houses than the receiving build
+    can house.
+    """
+
+    MAGIC = 0xC0B2C52F
+    #: the pool follows the last of a run of empty FNames, eight bytes on
+    ANCHOR = b"\x05\x00\x00\x00None\x00" + b"\x00" * 8
+    WINDOW = 0x4000               # how far into the block to look
+    MAX = 64                      # a pool bigger than this is a misread
+
+    def __init__(self, at: int, handles: List[int]):
+        self.at = at              # where the pool's count sits in the payload
+        self.handles = handles    # the whole pool, empty slots included
+
+    @classmethod
+    def parse(cls, payload: bytes) -> Optional["HouseRegistry"]:
+        """Find the pool.  None if this save has no craft-area NPC block."""
+        base = payload.find(_u32(cls.MAGIC))
+        if base < 0:
+            return None
+        at = -1
+        i = payload.find(cls.ANCHOR, base, base + cls.WINDOW)
+        while i >= 0:
+            at = i + len(cls.ANCHOR)
+            nxt = payload.find(cls.ANCHOR, i + 1, base + cls.WINDOW)
+            if nxt < 0 or nxt > at + 0x40:
+                break
+            i = nxt
+        if at < 0 or at + 4 > len(payload):
+            return None
+        n = struct.unpack_from("<I", payload, at)[0]
+        if not 1 <= n <= cls.MAX or at + 4 + 4 * n > len(payload):
+            return None
+        handles = list(struct.unpack_from("<%dI" % n, payload, at + 4))
+        # A slot is either empty or an object handle, and a handle carries its
+        # own check digit; anything else means this is not the pool.
+        if not all(h == 0 or CraftObject.rule_handle(h & 0xFFFFFF) == h
+                   for h in handles):
+            return None
+        return cls(at, handles)
+
+    @property
+    def listed(self) -> List[int]:
+        """The houses the pool points at, empty slots dropped."""
+        return [h for h in self.handles if h]
+
+    @property
+    def capacity(self) -> int:
+        """How many villager houses this build lets a save list."""
+        return len(self.handles)
+
+    def sync(self, payload: bytearray, camp: "BaseCamp") -> int:
+        """Point the pool at *camp*'s villager houses.  Returns how many fit.
+
+        The pool keeps the length it had, because that length is the build's
+        cap and not a count -- so this writes over the slots in place and moves
+        nothing behind it.  An island carrying more villager houses than the
+        cap has the last of them left off the list: they stand and can be
+        entered, they just cannot be moved into, which is where a save of this
+        build would be anyway.
+        """
+        want = camp.house_handles()[:self.capacity]
+        if self.listed != want:
+            self.handles = want + [0] * (self.capacity - len(want))
+            struct.pack_into("<%dI" % self.capacity, payload, self.at + 4,
+                             *self.handles)
+        return len(want)
+
+
 # -------------------------------------------------------------------- block
 
 class BaseCamp:
@@ -488,6 +580,19 @@ class BaseCamp:
 
     def houses_of(self, category: int) -> List[House]:
         return [h for h in self.houses if h.used and h.category == category]
+
+    def house_handles(self) -> List[int]:
+        """The object handle of every villager house, in house order.
+
+        This is what :class:`HouseRegistry` has to list for the game to offer
+        the house when a villager is looking for somewhere to live.
+        """
+        out = []
+        for h in self.houses_of(HOUSE_INHABITANT):
+            obj = self.object_for(h)
+            if obj is not None:
+                out.append(obj.stored_handle())
+        return out
 
     def empty_room_names(self) -> List[str]:
         """What the area block calls this island's villager rooms, in order.

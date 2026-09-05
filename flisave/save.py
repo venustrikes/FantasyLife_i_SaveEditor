@@ -8,8 +8,8 @@ import struct
 import time
 from typing import Iterable, List, Optional, Tuple
 
-from .basecamp import (BaseCamp, BaseCampError, SCOPES, read_layout,
-                       write_layout)
+from .basecamp import (BaseCamp, BaseCampError, HouseRegistry, SCOPES,
+                       read_layout, write_layout)
 from .codec import SaveContainer, SaveCodecError
 from .gvas import GvasHeader
 from .items import (ItemSection, ItemRecord, EMPTY, _fstring_len, heal_core_names,
@@ -651,6 +651,10 @@ class SaveFile:
         self.base_camp
         return self._camp_error
 
+    def house_registry(self) -> Optional[HouseRegistry]:
+        """The pool of villager-house handles the *Manage inhabitants* list reads."""
+        return HouseRegistry.parse(bytes(self.payload))
+
     def flush_base_camp(self) -> None:
         """Write pending island edits back.  Both blocks can change length."""
         camp = self._camp
@@ -668,9 +672,24 @@ class SaveFile:
         camp.end = camp.start + len(blob)
         camp.area_start += moved
         camp.area_end += moved
+        self._sync_house_registry(camp)
         # the recipe table and Ginormosia sit behind the island
         self._recipes = None
         self._hugemap = None
+
+    def _sync_house_registry(self, camp: BaseCamp) -> Optional[int]:
+        """Keep the villager-house pool in step with the island.
+
+        It sits outside both island blocks and is what the game reads when a
+        villager is looking for a house, so an island written without it lands
+        with houses nobody can move into.  Located after the splice, because
+        the splice is what moved it; the rewrite itself is the same length and
+        moves nothing.
+        """
+        reg = HouseRegistry.parse(bytes(self.payload))
+        if reg is None:
+            return None
+        return reg.sync(self.payload, camp)
 
     def craft_name(self, item_id: Optional[str], language: str = "en") -> str:
         """Name a placed object, allowing for the suffixes its ids carry.
@@ -757,6 +776,10 @@ class SaveFile:
         Whatever the scope, a layout never hands over a house *level*: your own
         house, the Guild office and the gallery keep the building this save has
         and only move to where the layout puts them.
+
+        The villager houses that arrive are put back on the pool the game reads
+        when someone is looking for a home -- see :class:`HouseRegistry` -- and
+        ``houses_unlisted`` says how many of them this build has no room for.
         """
         if scope not in SCOPES:
             raise ValueError("scope must be one of %s" % (", ".join(SCOPES),))
@@ -785,8 +808,12 @@ class SaveFile:
         else:
             out = camp.replace_objects(other)
         self.flush_base_camp()
+        reg = self.house_registry()
+        listed = len(reg.listed) if reg is not None else 0
         out["scope"] = scope
         out["kept_levels"] = kept
+        out["houses_listed"] = listed
+        out["houses_unlisted"] = max(0, len(camp.house_handles()) - listed)
         out.update(camp.counts())
         return out
 

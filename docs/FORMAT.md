@@ -839,8 +839,9 @@ slot 2 points at `NPCRoom_002500` while the area block still names its room
 `NPCEmptyRoom_00`, and the empty one at slot 3 points at `NPCEmptyRoom_01`.
 
 That matters for sharing, because a resident belongs to the save they live in:
-the assignment itself is `craftAreaInhabitantInfo` (`{ handles[]; uint16
-inhabitantKey }`), which lives outside both of these blocks. An island imported
+the house names them only through `entranceMapId`, and the array that offers
+houses to villagers at all (`craftAreaInhabitantInfo`, below) lives outside
+both of these blocks. An island imported
 with `NPCRoom_00xxxx` still in it claims villagers the receiving game has never
 met, and in game those houses come out with a **blank name**, never appear in
 *Manage inhabitants*, and read `<CHARA_NAME>` where the resident should be. So
@@ -860,6 +861,36 @@ of thing.
 Those three are progress, not layout, so an import moves them and does not
 regrade them: where both islands have one, the incoming house takes the position
 the layout gives it and keeps the building the receiving save already had.
+
+### The list a villager is offered
+
+A villager house is written twice. The island block has the building and its
+`CraftObjExParamHouse`; a second block much further on — magic `0xC0B2C52F`,
+well past both island blocks and just ahead of the recipe table — repeats it as
+a handle in `craftAreaInhabitantInfo`:
+
+```
+uint32 n;  n x uint32   inhabitantHouseCraftObjStatusHandle
+uint16                  inhabitantKey
+```
+
+Those are `CraftObjStatusP` handles — the *building*, not the house record —
+and **that array is the list the game offers you when you send a villager to
+live somewhere**. A house missing from it is built, standing and enterable, and
+can never be moved into.
+
+`n` is the build's villager cap rather than a count of houses: 6 on the June
+Switch build, 10 on the December PC and August iOS ones, the same whether the
+island has no houses or six, with the unused tail left at zero. On all
+seventeen saves read here the non-zero entries are exactly that island's
+villager houses, in house order, which is what identifies the array; the
+property table gives it its name, `FCraftAreaInhabitantInfo` holding
+`inhabitantHouseCraftObjStatusHandle` at `0x18` and `inhabitantKey` at `0x28`.
+
+It is found by walking from the magic to the last of a run of empty FNames and
+reading the array eight bytes on. Every handle carries its own check digit
+(`slot | ((slot + 1) & 0xFF) << 24`), so a misread is refused rather than
+written over.
 
 ### The header
 
@@ -887,8 +918,10 @@ interiors inseparable without needing to model five more struct shapes.
 `flisave/basecamp.py` exports both blocks as one gzipped JSON document
 (`.flicamp`, about 80 KB for a full island): the used object slots, the used
 land tiles, the house pool, the small ex-parameter pools and the area block as
-base64. Nothing outside the two blocks points into them, so an import can
-replace them outright.
+base64. One thing outside the two blocks points into them — the villager-house
+array above — so an import replaces them outright and then writes that array
+again from the houses it ended up with, keeping the length it found because
+that length is the receiving build's cap.
 
 The pool is addressed by slot and every handle is derived from that slot, which
 is what makes a *partial* import possible as well: the kept objects and the

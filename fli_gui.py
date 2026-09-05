@@ -1200,10 +1200,14 @@ class App(ttk.Frame):
             return
         got = sf.import_base_camp(path, self.camp_scope())
         self.var_camp_ok.set(False)
+        bits = ["%d object(s)" % got["used"], "%d house(s)" % got["houses"]]
+        if got["houses_listed"]:
+            bits.append("%d ready for a villager" % got["houses_listed"])
+        if got["houses_unlisted"]:
+            bits.append("%d this build cannot list" % got["houses_unlisted"])
         note = ("; " + "; ".join(got["kept_levels"])) if got["kept_levels"] else ""
-        self.touch("island imported (%s): %d object(s), %d house(s)%s -- Save "
-                   "to write it to the file"
-                   % (got["scope"], got["used"], got["houses"], note))
+        self.touch("island imported (%s): %s%s -- Save to write it to the file"
+                   % (got["scope"], ", ".join(bits), note))
         self.refresh_camp()
 
     def _tab_tools(self, parent):
