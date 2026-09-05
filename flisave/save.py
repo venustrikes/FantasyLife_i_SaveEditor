@@ -222,7 +222,7 @@ class SaveFile:
     def give_item(self, item_id: str, quantity: int = 1,
                   array_index: Optional[int] = None,
                   title: Optional[int] = None,
-                  super_op: bool = False) -> ItemRecord:
+                  age: Optional[int] = None) -> ItemRecord:
         """Put *item_id* into an empty slot (or top up an existing stack).
 
         The container is the one the game itself would use, which for ``iam``
@@ -230,8 +230,8 @@ class SaveFile:
         the wrong bag never appears in game.  Equipment never stacks: each piece
         is its own record, and *title* picks the grade its stats come from.
 
-        With *super_op* a piece of equipment comes out the way a fully aged one
-        does -- see :meth:`~flisave.items.ItemRecord.make_super_op`.
+        *age* is the Aging Altar vintage a new piece is left at, or None for a
+        fresh one.  Abilities are their own field and are not set here.
         """
         sec = self.items
         if sec is None:
@@ -250,11 +250,11 @@ class SaveFile:
         rec = sec.first_empty(array_index)
         if rec is None:
             raise ValueError("container %d has no free slot" % array_index)
-        rec.place(item_id, quantity, sec.next_instance_id(), title, super_op)
+        rec.place(item_id, quantity, sec.next_instance_id(), title, age)
         return rec
 
     def give_every(self, kind: str, quantity: int = 1, *,
-                   title: Optional[int] = None, super_op: bool = False,
+                   title: Optional[int] = None, age: Optional[int] = None,
                    learn: bool = True) -> dict:
         """Put every item of one *kind* into the bag the game keeps it in.
 
@@ -266,15 +266,15 @@ class SaveFile:
         separate pieces of each item to leave in the bag.
 
         *title* is the grade each new piece is spawned at, or None for the best
-        grade the item has stats for; *super_op* finishes it the way the Aging
-        Altar does.  Both are ignored by a stackable bag, which has neither
-        field.
+        grade the item has stats for, and *age* the Aging Altar vintage to
+        leave every piece at.  Both are ignored by a stackable bag, which has
+        neither field.
 
         Running it twice does not fill the bag with a second copy of
         everything: a bag that already holds enough of an id is left alone.
-        Asking for a *title* or for *super_op* does re-grade the pieces already
-        there, since that is the state the caller just asked every one of them
-        to be in.
+        Asking for a *title* or an *age* does reach the pieces already there,
+        since that is the state the caller just asked every one of them to be
+        in.
 
         Recipes are the one kind where the bag is only half of it: a crafting
         bench lists what ``FRecipeStatusP`` says the player knows, not what is
@@ -319,12 +319,12 @@ class SaveFile:
         for item_id in every:
             have = here.get(item_id) or []
             if equipment:
-                if title is not None or super_op:
+                if title is not None or age is not None:
                     for rec in have:
                         if title is not None:
                             rec.item_title = title
-                        if super_op:
-                            rec.make_super_op(keep_title=title is not None)
+                        if age is not None:
+                            rec.ripening_age = age
                         topped += 1
                 want = quantity - len(have)
             else:
@@ -337,7 +337,7 @@ class SaveFile:
                 if rec is None:
                     no_room += 1
                     continue
-                rec.place(item_id, quantity, instance, title, super_op)
+                rec.place(item_id, quantity, instance, title, age)
                 instance += 1
                 added += 1
         out = {"added": added, "topped_up": topped, "no_room": no_room,

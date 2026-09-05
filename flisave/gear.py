@@ -14,8 +14,9 @@ Four things live here that the save format alone cannot tell you:
   filler for "this item does not exist at this grade".  Life tools are graded
   the same way out of their own table, and read 0 power for the same reason.
 
-* **the Aging Altar's best roll.**  An aged piece carries three ``es_*``
-  equipment skills, and which three depends on the kind of gear it is.
+* **the Aging Altar's own roll.**  The Altar picks a piece's equipment
+  skills from one lot table per kind of gear; the head of that table is what
+  the editor offers as the suggestion for a piece.
 
 * **which ``iam`` ids are shields.**  Shields are a separate inventory
   category from armour, and an item dropped in the wrong bag never shows up.
@@ -88,7 +89,7 @@ class GearDB:
         self.sentinel: int = payload.get("sentinel", SENTINEL)
         self.weapons: Dict[str, dict] = payload.get("weapons") or {}
         self.tools = frozenset(payload.get("tools") or ())
-        self.op = payload.get("op_skills") or {}
+        self.ripening = payload.get("ripening_skills") or {}
         self.shields = frozenset(payload.get("shields") or _FALLBACK_SHIELDS)
         self.materials: List[str] = payload.get("materials") or []
         self.recipes: List[str] = payload.get("recipes") or []
@@ -147,13 +148,15 @@ class GearDB:
     def stat_label(self, item_id: str) -> str:
         return "power" if self.is_tool(item_id) else "attack"
 
-    def op_skills(self, item_id: str) -> List[str]:
-        """The three equipment skills the Aging Altar's best roll would give.
+    def ripening_skills(self, item_id: str) -> List[str]:
+        """The top of the Aging Altar's own lot table for this piece.
 
+        Three ids, the head of the table the Altar rolls this kind of gear
+        from, so they are what it can put on the piece rather than a guess.
         Empty for anything the Altar does not take -- body armour, consumables
         -- so a caller can leave those alone rather than invent skills for them.
         """
-        return list(self.op.get(item_id) or ())
+        return list(self.ripening.get(item_id) or ())
 
     def named_ids(self, prefixes) -> List[str]:
         """Every id the *fallback* language names, whose prefix is in *prefixes*.
@@ -261,8 +264,8 @@ def stat_label(item_id: str) -> str:
     return get().stat_label(item_id)
 
 
-def op_skills(item_id: str) -> List[str]:
-    return get().op_skills(item_id)
+def ripening_skills(item_id: str) -> List[str]:
+    return get().ripening_skills(item_id)
 
 
 def every(kind: str) -> List[str]:

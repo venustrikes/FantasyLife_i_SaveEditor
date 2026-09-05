@@ -16,11 +16,13 @@
     python fli.py basecamp   <save> --import island.flicamp [--scope all|terrain|objects]
     python fli.py give       <save> --id ics01000780 --qty 99 [-o out]
     python fli.py give       <save> --id iwp02000220 [--title 5]
-    python fli.py give       <save> --id ilt01000120 --super-op
+    python fli.py give       <save> --id ilt01000120 --age 1000 --ability best
     python fli.py set-slot   <save> --slot 0:12 --id iwp01000010 --qty 1 [-o out]
+    python fli.py set-slot   <save> --slot 1:0 --ability es_attack_up06 --age 1000
+    python fli.py abilities  [--for iwp02000220] [--search attack] [--lang it]
     python fli.py give-all   <save> --what materials|recipes|crafts [--qty N]
     python fli.py give-all   <save> --what weapons|tools|shields|armour
-                             [--qty copies] [--title 5] [--super-op]
+                             [--qty copies] [--title 5] [--age 1000]
     python fli.py set-qty    <save> --container 7 --qty 999
     python fli.py fix-gear   <save> [--dry-run]
     python fli.py clear-slot <save> --slot 0:12 [-o out]
@@ -45,7 +47,7 @@ from flisave.hunt import Hunt, scan_all_types
 from flisave.basecamp import SCOPES
 from flisave.save import SaveFile, CURRENCIES
 from flisave.world import BOARDS, BOARD_BY_KEY, MAX_RANK, TOWER_COUNT
-from flisave import gear, items, names as namedb, recipes as reciped
+from flisave import abilities, gear, items, names as namedb, recipes as reciped
 
 TYPES = ["u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "f32", "f64"]
 
@@ -357,6 +359,49 @@ def cmd_set_life(args):
     _save_out(sf, args)
 
 
+def cmd_abilities(args):
+    """List the equipment abilities the editor can write, and what suits what."""
+    db = abilities.get()
+    if not db.loaded:
+        sys.exit("no ability catalogue at %s: %s"
+                 % (db.path, db.error or "not found"))
+    if args.for_item:
+        bag = None
+        cat = items.category_for(args.for_item)
+        if cat is not None:
+            bag = items.GEAR_BAGS.get(cat)
+        picks = db.suggest(args.for_item, bag)
+        how = ("the Aging Altar's own table for this kind of gear"
+               if db.suggestion_source(args.for_item) == "altar"
+               else "what real saves carry on %s, since the Altar does not "
+                    "take it" % (bag or "this"))
+        print("best for %s (%s) -- %s"
+              % (args.for_item, namedb.get().resolve(args.for_item, args.lang)
+                 or "?", how))
+        for a in picks:
+            print("   %-34s %s" % (a, db.name(a, args.lang)))
+        print()
+    found = db.search(args.search or "", args.lang, args.bag)
+    print("%-34s %-30s %-6s %-7s %s"
+          % ("id", "name", "level", "from", "seen on"))
+    for a in found[:args.limit]:
+        print("%-34s %-30s %-6s %-7s %s"
+              % (a, db.name(a, args.lang)[:30], db.level(a) or "-",
+                 db.origin(a), ", ".join(db.bags(a)) or "-"))
+    if len(found) > args.limit:
+        print("... %d more (raise --limit)" % (len(found) - args.limit))
+    print()
+    print("%d ability id(s) in the catalogue, from %d build(s) of the game."
+          % (len(db.ids()), len(db.builds)))
+    print("'from' says where the id was found: save = a real record carried")
+    print("it, altar = an Aging Altar lot table, text = the game names it but")
+    print("no save here has one.  A name the editor made up is marked below.")
+    glossed = [a for a in found[:args.limit] if db.is_glossed(a)]
+    if glossed:
+        print("the editor's own words, not the game's: %s"
+              % ", ".join(glossed[:6]))
+
+
 def cmd_search(args):
     db = namedb.get()
     if not db.loaded:
@@ -383,18 +428,50 @@ def _placed(sf, rec):
         if rec.ripening_age:
             lines.append("  aged  %d-year vintage, quality %d"
                          % (rec.ripening_age, rec.quality))
-        rolled = [k for k in rec.grant_skills if k != items.NO_SKILL]
-        if rolled:
-            lines.append("  skills %s" % ", ".join(rolled))
+        lines.extend(_abilities_of(rec, "en"))
     return "\n".join(lines)
+
+
+def _set_abilities(rec, wanted) -> None:
+    """Write ``--ability`` into the slots.  ``best`` and ``none`` are words.
+
+    Given nothing, the slots are left exactly as they were: an ability is not
+    something a grade or a vintage implies, and clearing one by accident is
+    worse than making the caller ask.
+    """
+    if not wanted or not rec.equipment or rec.empty:
+        return
+    if any(w.lower() == "best" for w in wanted):
+        picks = rec.best_abilities()
+    elif all(w.lower() == "none" for w in wanted):
+        picks = []
+    else:
+        picks = [w for w in wanted if w.lower() != "none"]
+    db = abilities.get()
+    for pick in picks:
+        if pick not in db:
+            print("  note: %s is not in the ability catalogue -- writing it "
+                  "anyway" % pick)
+    rec.grant_skills = picks
+
+
+def _abilities_of(rec, lang: str) -> list:
+    """The lines an item card's second page would show for this piece."""
+    db = abilities.get()
+    out = []
+    for i, ability in enumerate(rec.grant_skills):
+        if ability == items.NO_SKILL:
+            continue
+        mark = "   (the editor's own words)" if db.is_glossed(ability) else ""
+        out.append("  ability %d  %-34s %s%s"
+                   % (i + 1, ability, db.name(ability, lang), mark))
+    return out
 
 
 def cmd_give(args):
     sf = SaveFile.load(args.save, verify=not args.no_verify)
-    rec = sf.give_item(args.id, args.qty, args.container, args.title,
-                       args.super_op)
-    if rec.equipment and args.age is not None:
-        rec.ripening_age = args.age
+    rec = sf.give_item(args.id, args.qty, args.container, args.title, args.age)
+    _set_abilities(rec, args.ability)
     print(_placed(sf, rec))
     _save_out(sf, args)
 
@@ -407,19 +484,19 @@ def cmd_set_slot(args):
         rec.place(args.id,
                   args.qty if args.qty is not None else max(1, rec.quantity),
                   rec.instance_id or sf.items.next_instance_id(),
-                  args.title, args.super_op)
+                  args.title, args.age)
     elif args.qty is not None:
         rec.quantity = args.qty
     if rec.equipment and args.age is not None:
         rec.ripening_age = args.age
+    _set_abilities(rec, args.ability)
     print(_placed(sf, rec))
     _save_out(sf, args)
 
 
 def cmd_give_all(args):
     sf = SaveFile.load(args.save, verify=not args.no_verify)
-    got = sf.give_every(args.what, args.qty, title=args.title,
-                        super_op=args.super_op)
+    got = sf.give_every(args.what, args.qty, title=args.title, age=args.age)
     bag = sf.items.arrays[got["container"]]
     print("%s -> [%d] %s: %d added, %d topped up, of %d"
           % (args.what, got["container"], bag.label,
@@ -431,7 +508,7 @@ def cmd_give_all(args):
               % (max(1, args.qty),
                  items.ITEM_TITLES[args.title] if args.title is not None
                  else "the best grade each item has stats for",
-                 ", aged %d years" % items.OP_RIPENING_AGE if args.super_op else ""))
+                 ", aged %d years" % args.age if args.age else ""))
     if "learned" in got:
         # The scrolls are only half of a recipe; without this the bench list
         # does not move, however full the bag is.
@@ -699,17 +776,28 @@ def main(argv=None):
     s.add_argument("-o", "--out")
     s.set_defaults(f=cmd_set_life)
 
+    s = sub.add_parser("abilities", help="the equipment abilities the editor "
+                       "can write, and which suit a given piece")
+    s.add_argument("--for", dest="for_item", metavar="ITEM_ID",
+                   help="also say which abilities suit this item")
+    s.add_argument("--search", help="part of an ability name or id")
+    s.add_argument("--bag", choices=abilities.BAGS,
+                   help="lead with the ones seen on this kind of gear")
+    s.add_argument("--limit", type=int, default=40)
+    s.set_defaults(f=cmd_abilities)
+
     s = sub.add_parser("search")
     s.add_argument("text", help="part of an item name, e.g. \"potion\"")
     s.add_argument("--limit", type=int, default=40)
     s.set_defaults(f=cmd_search)
 
     s = sub.add_parser("give")
-    _OP_HELP = ("finish a piece of equipment the way the Aging Altar does: the "
-                "grade its stats live at, a %d-year vintage, top quality and "
-                "the three equipment skills the game rolls for that kind of "
-                "gear" % items.OP_RIPENING_AGE)
-    _AGE_HELP = "vintage in years on its own, 0-65535 (Aging Altar's ripeningAge)"
+    _AGE_HELP = ("Aging Altar vintage in years, 0-65535 -- %d is what the "
+                 "Altar itself produces" % items.ALTAR_AGE)
+    _ABILITY_HELP = ("an equipment ability id (es_*) for the next free slot, "
+                     "up to %d times; 'best' fills every slot with what suits "
+                     "the piece, 'none' empties them"
+                     % abilities.SLOTS)
     _TITLE_HELP = ("equipment grade 0-5 (None/Rag/Normal/Masterpiece/Supreme/"
                    "Legend); it picks which entry of the item's stat list the "
                    "game reads, and defaults to the best one the item has")
@@ -718,8 +806,9 @@ def main(argv=None):
     s.add_argument("--qty", type=int, default=1)
     s.add_argument("--container", type=int)
     s.add_argument("--title", type=int, choices=range(6), help=_TITLE_HELP)
-    s.add_argument("--super-op", action="store_true", help=_OP_HELP)
     s.add_argument("--age", type=int, help=_AGE_HELP)
+    s.add_argument("--ability", action="append", metavar="ES_ID",
+                   help=_ABILITY_HELP)
     s.add_argument("-o", "--out")
     s.set_defaults(f=cmd_give)
 
@@ -729,8 +818,9 @@ def main(argv=None):
     s.add_argument("--id")
     s.add_argument("--qty", type=int)
     s.add_argument("--title", type=int, choices=range(6), help=_TITLE_HELP)
-    s.add_argument("--super-op", action="store_true", help=_OP_HELP)
     s.add_argument("--age", type=int, help=_AGE_HELP)
+    s.add_argument("--ability", action="append", metavar="ES_ID",
+                   help=_ABILITY_HELP)
     s.add_argument("-o", "--out")
     s.set_defaults(f=cmd_set_slot)
 
@@ -744,7 +834,7 @@ def main(argv=None):
                         "separate pieces in an equipment bag, which has no "
                         "stack at all")
     s.add_argument("--title", type=int, choices=range(6), help=_TITLE_HELP)
-    s.add_argument("--super-op", action="store_true", help=_OP_HELP)
+    s.add_argument("--age", type=int, help=_AGE_HELP)
     s.add_argument("-o", "--out")
     s.set_defaults(f=cmd_give_all)
 

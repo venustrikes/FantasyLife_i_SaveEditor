@@ -17,9 +17,9 @@ way in:
 ### **[fli-web-se.vercel.app](https://fli-web-se.vercel.app/)**
 
 No server and no upload — the save is read, edited and written inside the tab,
-on your own machine. It covers the Items tab (containers, grades, vintages,
-**Super OP Weapon Mode**, bulk fills, gear repair), the character name and
-vitals, the wallet, the Lives (level, EXP, rank, PA), the World (bulletin
+on your own machine. It covers the Items tab (containers, grades, **Edit stats**
+for a piece's abilities and vintage, bulk fills, gear repair), the character
+name and vitals, the wallet, the Lives (level, EXP, rank, PA), the World (bulletin
 boards, Ginormosia, the eye towers) and the **Base Camp** island, layout
 export and import included.
 
@@ -103,15 +103,15 @@ python fli_gui.py path\to\002DAE74-00-gamedata.bin
   or drop something into the first free slot. Each row shows
   the item's icon and its real name, and **Find...** opens a searchable picker
   ("potion", "spada") that puts the id straight into the box.
-  Equipment also has a **grade** — see [Gear grades](#gear-grades) — a
-  **vintage** in years, and a **Super OP Weapon Mode** tick box that finishes a
-  piece the way the Aging Altar does; see
-  [Super OP Weapon Mode](#super-op-weapon-mode).
+  Equipment also has a **grade** — see [Gear grades](#gear-grades) — and an
+  **Edit stats...** button that opens the piece's own card: its grade and what
+  that grade is worth, the **abilities** in its three slots, and its Aging
+  Altar **vintage**; see [The item card](#the-item-card).
   **Add to first free slot** files it in the container the game itself uses,
   following the view there. **Fix gear...** repairs pieces spawned before the
   editor understood any of this. Underneath, a **Give every ...** panel fills
   the whole bag — every weapon, Life tool, shield, piece of armour, craft item,
-  material or recipe the game defines, at a grade and with Super OP where those
+  material or recipe the game defines, at a grade and a vintage where those
   apply; see [Bulk fills](#bulk-fills).
 * **Lives** — level, EXP, rank and PA (the ability points a Life spends on its
   abilities) for all fourteen Lives, each with its emblem. Rank is a dropdown
@@ -147,11 +147,12 @@ python fli.py search     "potion" [--lang it]            # item name -> item id
 
 python fli.py give       <save> --id ics01000780 --qty 99
 python fli.py give       <save> --id iwp02000220 [--title 5]   # a weapon
-python fli.py give       <save> --id ilt01000120 --super-op   # ...fully aged
+python fli.py give       <save> --id ilt01000120 --age 1000 --ability best
 python fli.py give-all   <save> --what materials --qty 999
 python fli.py give-all   <save> --what recipes
 python fli.py give-all   <save> --what crafts --qty 999
-python fli.py give-all   <save> --what weapons --title 5 --super-op
+python fli.py give-all   <save> --what weapons --title 5 --age 1000
+python fli.py abilities  [--for iwp02000220] [--search attack] [--lang it]
 python fli.py give-all   <save> --what armour --qty 2   # two of each piece
 python fli.py set-qty    <save> --container 7 --qty 999
 python fli.py set-slot   <save> --slot 0:12 --id iwp01000010 --qty 1
@@ -445,8 +446,10 @@ two prison tiles the Japanese table still marks `(仮)`, *provisional*.
 
 **Equipment has no stack.** Every piece is its own record, so on the four
 equipment bags the quantity is *how many copies of each item* rather than a
-stack size, and the fill takes a **grade** and the **Super OP Weapon Mode**
-tick box with it. The grade dropdown leads with *best grade for each item*,
+stack size, and the fill takes a **grade** and an Aging Altar **vintage** with
+it. Abilities are not in the fill: which ones suit a piece depends on the
+piece, so they stay on its own card. The grade dropdown leads with *best grade
+for each item*,
 which is the right answer for a whole bag at once: one grade across 117
 different weapons leaves 68 of them reading zero, and the panel says how many
 as soon as you pick one. Craft items, materials and recipes stack, so they take
@@ -457,18 +460,18 @@ grade.
 python fli.py give-all <save> --what materials --qty 999
 python fli.py give-all <save> --what recipes
 python fli.py give-all <save> --what crafts --qty 999
-python fli.py give-all <save> --what weapons --title 5 --super-op
+python fli.py give-all <save> --what weapons --title 5 --age 1000
 python fli.py give-all <save> --what armour --qty 2
 python fli.py set-qty  <save> --container 7 --qty 999
 ```
 
 In the GUI a **Give every ...** panel sits under the slot editor and follows
 the container dropdown: it names the bag on screen, is off screen entirely on
-the bags with no fill, and only shows the grade and the tick box where they
+the bags with no fill, and only shows the grade and the vintage where they
 mean something. Running it again tops up what is already there instead of
 adding a second copy, so it is safe to repeat — and if you asked for a grade or
-for Super OP, the pieces already in the bag are brought up to it rather than
-being left behind at their old one.
+a vintage, the pieces already in the bag are brought up to it rather than being
+left behind at their old one.
 
 **Set every quantity here...** appears on any bag whose items stack, and asks
 for the number. It skips equipment on purpose: a piece of gear has no quantity,
@@ -532,41 +535,84 @@ untitled — which is what the game itself writes on every piece of armour it
 hands out.
 
 
-## Super OP Weapon Mode
+## The item card
 
-The gear in the "super OP" saves going round is not spawned gear with a big
-number written into it. It is gear that has been through the **Aging Altar**
-in the Plant Dungeon, and the save records three separate things about it — all inside the equipment
-extension, all of which this editor used to carry through untouched:
+Everything a piece of gear carries beyond its id lives in four fields of the
+equipment extension, and **Edit stats...** on a selected slot opens them the way
+the game's own item card shows them — three pages, one per thing:
 
-| Field | What it does |
-|---|---|
-| `itemTitle` | the grade the stats are read at — Legendary or nothing, on a story weapon or tool |
-| `ripeningAge` | the vintage in years, the *Aging: 1000-year vintage* line |
-| `grantSkillId` | three `es_*` equipment skills the Altar rolls |
-| `quality` | `EItemQualityType`, 0–3 |
+| Page | Field | What it is |
+|---|---|---|
+| **Stats** | `itemTitle` | the grade the stats are read at, and what that grade is worth |
+| | `quality` | `EItemQualityType`, 0–3 — the crafting mark |
+| **Abilities** | `grantSkillId` | three slots of `es_*` equipment abilities |
+| **Aging** | `ripeningAge` | the vintage in years, the *Aging: 1000-year vintage* line |
+| | `isBurying` | set while the piece is in the ground at the Altar |
 
-Tick **Super OP Weapon Mode** and all four are written together: the best grade
-the item actually has stats for, a 1000-year vintage (what the Altar itself
-produces), top quality, and the three skills the game's own best-roll table
-gives that kind of gear. The line beside the tick box spells out what it will
-write before you press anything.
+This replaces the old **Super OP Weapon Mode** tick box, which wrote all four at
+once without showing any of them. Its one useful trick survives as the **Best
+for this piece** button on the Abilities page.
+
+### Abilities
+
+The second page of the game's card lists what a piece does — *Dark Damage +*,
+*Woodcutting +*, *Critical Damage +*. Each is an `es_*` id in one of the record's
+three `grantSkillId` slots, and the editor offers all three:
+
+* two **ability slots**, which is all the game itself ever fills — across 507
+  pieces of gear in a complete Switch save, slots 1 and 2 are used and slot 3
+  never is;
+* one **aging slot**, the third, the one the game's card marks with the Aging
+  Altar's leaf.
+
+Each slot is a dropdown with **None** at the top to empty it, a **search** box
+over the whole catalogue, and the ability's own description underneath.
+**Best for this piece** fills the slots with what suits it: the head of the
+Aging Altar's own lot table for that kind of gear (an axe gets the woodcutting
+roll, a pickaxe the mining one, a sword the attack one) or, for body armour —
+which the Altar has no category for — the abilities real saves are seen carrying
+on armour.
 
 ```
-python fli.py give <save> --id ilt01000120 --super-op
-  container 2 (Life tools) slot 12 -> ilt01000120 x1  True Axe of Time
-    title Legend  ->  power 750
-    aged  1000-year vintage, quality 3
-    skills es_felling_up05, es_charge_time_reduce02, es_spot_attack_up04
+python fli.py abilities --for iwp02000220 --search dark --lang it
+  best for iwp02000220 (Super spada del tempo) -- the Aging Altar's own table
+     es_attack_up06                     Attacco+
+     es_critical_damage_up01            Danni critici+
+     es_charge_time_reduce02            Carica veloce
+
+python fli.py set-slot <save> --slot 1:8 --ability es_attack_up06 --age 1000
+python fli.py give     <save> --id ilt01000120 --ability best --age 1000
 ```
 
-The vintage is editable on its own as well — the **aged** box in the window, or
-`--age N` on the command line — so a piece can be aged without the rest.
+**Where the ability list comes from.** The stat tables were read out of the
+game's pak, but the PC release ships an encrypted pak index and the ability
+table is in no executable, so `data/fli_abilities.json.gz` is built from the
+three places the ids can still be read — and every entry says which:
 
-The skill rolls come from `GDSAddSkillLotTable`, one table per kind of gear:
-an axe gets the woodcutting roll, a pickaxe the mining one, a sword the attack
-one. Body armour gets **no** skills, because the Altar has no category for it —
-the sixteen it does have are the weapon, Life tool and shield kinds.
+| `from` | Where it was found | How many |
+|---|---|---|
+| `save` | the game wrote it into a real equipment record | 110 |
+| `altar` | it is in an Aging Altar lot table | 6 |
+| `text` | the game's own text tables name it, but no save here carries it | 90 |
+
+The picker leads with the first two, and with the ones seen on the kind of gear
+being edited. `tools/build_abilities.py <save>...` rebuilds the file; feed it
+saves from as many builds as you have, because that is the only input that
+grows the first two rows.
+
+The shipped text tables name 173 of the 206 and describe about a fifth of them,
+with the game's `<SKILL_PARAM_1>` placeholders left standing — the numbers
+behind them are in neither the save nor the executable, so nothing is invented
+over them. The other fourteen families are shown in the editor's own words,
+marked with a `*` wherever they appear.
+
+### Aging
+
+The **Aging Altar** (`熟成祭壇`) in the Plant Dungeon buries a piece and gives it
+back with a vintage. That vintage is `ripeningAge`, editable on its own —
+the box on the Aging page, `--age N` on the command line, or **Age everything in
+this bag...** for a whole bag at once. 1000 years is what the Altar itself
+produces; the field is a `uint16`, so more fits, but nothing in game writes it.
 
 
 ## The wallet
@@ -639,6 +685,7 @@ flisave/gvas.py      UE5 GVAS header and the LEVEL5 sub-header
 flisave/stream.py    UE archive primitives (FString etc.)
 flisave/items.py     item container parser / serialiser
 flisave/gear.py      per-grade equipment stats (reads data/fli_gear.json.gz)
+flisave/abilities.py the es_* equipment abilities (data/fli_abilities.json.gz)
 flisave/lives.py     per-Life arrays
 flisave/world.py     bulletin boards and Ginormosia
 flisave/basecamp.py  the Base Camp island, and layout export/import
@@ -655,7 +702,8 @@ flisave/geardata.py  the equipment tables, for the gear database builder
 flisave/texture.py   cooked UTexture2D reader
 fli.py               command line
 fli_gui.py           the editor window
-tools/               build_textdb.py, build_geardb.py, build_icons.py
+tools/               build_textdb.py, build_geardb.py, build_abilities.py,
+                     build_icons.py
 data/                the shipped name database and icons
 docs/FORMAT.md       format documentation
 ```

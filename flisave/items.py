@@ -42,7 +42,7 @@ The equipment extension is where a piece of gear keeps everything that makes it
 worth having: :attr:`~ItemRecord.item_title` (the tier its stats are read at),
 :attr:`~ItemRecord.grant_skills`, :attr:`~ItemRecord.ripening_age` and
 :attr:`~ItemRecord.quality`.  All four are laid out below and all four are
-writable, which is what :meth:`ItemRecord.make_super_op` uses.
+writable, which is what the editors' *Edit stats* dialog writes through.
 """
 from __future__ import annotations
 
@@ -120,10 +120,14 @@ QUALITY_MAX = 3
 GRANT_SKILL_SLOTS = 3         # ``grantSkillId`` is a fixed three-element array
 NO_SKILL = "None"
 
-# What the game itself puts on a fully aged piece: the reference screenshot's
-# 1000-year vintage.  The field is a uint16, so higher fits, but 1000 is the
-# number the Altar actually produces and the only one seen in a real save.
-OP_RIPENING_AGE = 1000
+# What the Aging Altar puts on a fully aged piece: the 1000-year vintage.  The
+# field is a uint16, so higher fits, but 1000 is the number the Altar actually
+# produces and the only one seen in a real save.
+ALTAR_AGE = 1000
+
+# What :mod:`flisave.abilities` calls each bag of gear.  Mounts are here because
+# their records take the same extension shape, abilities and all.
+GEAR_BAGS = {1: "weapon", 2: "tool", 3: "shield", 4: "armour", 10: "mount"}
 
 # How many bytes follow the arrays, per build.  10 is the plain shape, 11 the
 # pre-version-2 one that still carried ``licenseItemCraftLv``, 12 adds
@@ -511,7 +515,7 @@ class ItemRecord:
 
     # -------------------------------------------------------------- mutation
     def place(self, item_id: str, quantity: int, instance_id: int,
-              title: Optional[int] = None, super_op: bool = False) -> None:
+              title: Optional[int] = None, age: Optional[int] = None) -> None:
         """Occupy this slot the way the game does.
 
         For equipment that means a title the item actually has stats for.
@@ -520,9 +524,20 @@ class ItemRecord:
         extension is the title, not a count, and the game reads the item's
         attack out of its data table at that grade.
 
-        With *super_op* the piece is finished the way the Aging Altar finishes
-        one -- see :meth:`make_super_op`.
+        *age* is the Aging Altar vintage to leave the piece at, or None to
+        leave it a fresh one.  Abilities are not touched here: they are their
+        own field, edited on their own -- see :meth:`best_abilities`.
+
+        Dropping a *different* item into an occupied slot starts it from
+        nothing rather than letting it inherit the vintage, quality and
+        abilities of whatever was there: those belong to the piece, and a sword
+        wearing the axe's abilities is not a state the game can produce.
         """
+        if self.equipment and not self.empty and self.item_id != item_id:
+            self.grant_skills = []
+            self.ripening_age = 0
+            self.quality = 0
+            self.is_burying = 0
         self.item_id = item_id
         self.instance_id = instance_id
         self.aoc_id = self.expired_item_id = EMPTY
@@ -532,46 +547,29 @@ class ItemRecord:
         if self.equipment:
             from . import gear
             self.item_title = gear.best_title(item_id) if title is None else title
-            if super_op:
-                self.make_super_op(keep_title=title is not None)
+            if age is not None:
+                self.ripening_age = age
         else:
             self.quantity = quantity
 
-    def make_super_op(self, *, age: int = OP_RIPENING_AGE,
-                      keep_title: bool = False) -> dict:
-        """Finish this piece the way a fully aged one comes out of the Altar.
+    @property
+    def gear_bag(self) -> Optional[str]:
+        """Which kind of gear this is -- ``weapon``, ``armour`` and the rest."""
+        return GEAR_BAGS.get(self.array_index)
 
-        Four things separate the gear in a "super OP" save from the gear an
-        editor spawns, and all four live in this record:
+    def best_abilities(self) -> List[str]:
+        """The abilities worth putting on this piece, best first.
 
-        * ``item_title`` -- the tier the game reads the stats at.  A weapon or
-          tool that only exists at Legend reads 0 at any other title.
-        * ``ripening_age`` -- the Aging Altar's vintage, shown as
-          *Aging: <n>-year vintage*.  Nothing wrote it before, so spawned gear
-          was always a 0-year piece.
-        * ``grant_skills`` -- the three ``es_*`` equipment skills the Altar
-          rolls, taken here from the game's own best-roll table for the item.
-        * ``quality`` -- ``EItemQualityType``, which tops out at 3.
-
-        Returns what it set, so a caller can say so.  Does nothing to a
-        stackable record: those have none of these fields.
+        The Aging Altar's own lot table where the game has one for this kind of
+        gear, and otherwise -- body armour, which the Altar does not take --
+        the ones real saves are seen carrying on it.  See
+        :mod:`flisave.abilities`; empty for a stackable record, which has no
+        such field.
         """
-        if not self.equipment:
-            return {}
-        from . import gear
-        if not keep_title:
-            best = gear.best_title(self.item_id)
-            if best:
-                self.item_title = best
-        skills = gear.op_skills(self.item_id)
-        if skills:
-            self.grant_skills = skills
-        self.ripening_age = age
-        self.quality = QUALITY_MAX
-        self.is_burying = 0
-        return {"title": self.item_title, "title_name": self.title_name,
-                "ripening_age": self.ripening_age, "quality": self.quality,
-                "skills": [s for s in self.grant_skills if s != NO_SKILL]}
+        if not self.equipment or self.empty:
+            return []
+        from . import abilities as _abilities
+        return _abilities.get().suggest(self.item_id, self.gear_bag)
 
     @property
     def empty(self) -> bool:

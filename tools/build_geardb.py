@@ -56,8 +56,8 @@ def main() -> int:
     print("  weapons  : %d with stat lists (%d flat across every title)"
           % (len(weapons) - len(tools), flat))
     print("  tools    : %d Life tools with power lists" % len(tools))
-    print("  op skills: %d items with an Aging Altar best roll"
-          % len(payload["op_skills"]))
+    print("  aging    : %d items with an Aging Altar roll"
+          % len(payload["ripening_skills"]))
     print("  shields  : %d ids" % len(payload["shields"]))
     print("  materials: %d ids" % len(payload["materials"]))
     print("  recipes  : %d ids" % len(payload["recipes"]))

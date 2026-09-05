@@ -405,7 +405,7 @@ def build(pak, name_db=None) -> dict:
         "sentinel": SENTINEL,
         "weapons": stats,
         "tools": sorted(tools),
-        "op_skills": ripening_skills(pak, shields),
+        "ripening_skills": ripening_skills(pak, shields),
         "shields": shields,
         "materials": table_ids(pak, MATERIAL_TABLE, MATERIAL_ID),
         "recipes": table_ids(pak, RECIPE_TABLE, RECIPE_ID),

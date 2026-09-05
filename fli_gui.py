@@ -19,7 +19,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from flisave import icons as iconset
-from flisave import gear, items, names as namedb, recipes as reciped
+from flisave import abilities, gear, items, names as namedb, recipes as reciped
 from flisave.character import FIELDS as VITALS
 from flisave.hunt import Hunt, TYPES as HUNT_TYPES
 from flisave.save import SaveFile, CURRENCIES
@@ -209,6 +209,335 @@ class ItemPicker(tk.Toplevel):
         if sel:
             self.choice = sel[0]
             self.destroy()
+
+
+SLOT_LABELS = ("Ability 1", "Ability 2", "Aging slot")
+SLOT_NOTES = (
+    "The first of the two the game itself writes.",
+    "The second.  No save the game wrote fills more than these two.",
+    "The third slot, the one the game's card marks with the Altar's leaf.",
+)
+
+# EItemQualityType.  Everything the game hands out is Quality 0; crafting
+# writes 1-3 alongside a maker's signature.
+QUALITY_NAMES = ("0  as the game hands it out", "1  crafted", "2  crafted, fine",
+                 "3  crafted, finest")
+
+
+class StatsDialog(tk.Toplevel):
+    """The item card, editable -- what a piece is worth, what it does, its age.
+
+    Three pages, the same three the game's own card has: the stat the grade is
+    read at, the abilities in the ``grantSkillId`` slots, and the Aging Altar
+    vintage.  It edits a record that is already in a bag, so the item id and the
+    bag are not its business; nothing is written until *Apply*, and Cancel
+    leaves the piece exactly as it was.
+
+    This replaces Super OP Weapon Mode, which wrote a grade, a vintage and three
+    abilities in one go without showing any of them.  All three are here, each
+    on its own, and the abilities that tick box used to pick are now what the
+    *Best for this piece* button offers.
+    """
+
+    def __init__(self, master, app, record):
+        super().__init__(master)
+        self.app = app
+        self.rec = record
+        self.applied = False
+        self.item_id = record.item_id
+        self.bag = record.gear_bag
+        self.db = abilities.get()
+        self.lang = app.lang()
+        self.name = namedb.get().resolve(self.item_id, self.lang) or self.item_id
+        self._slot_ids = []
+        self.title("Edit stats - %s" % self.name)
+        self.transient(master)
+        self.geometry("720x580")
+        self.minsize(640, 520)
+
+        head = ttk.Frame(self, padding=(10, 10, 10, 0))
+        head.pack(fill="x")
+        ttk.Label(head, image=app.icons.item(self.item_id, iconset.LARGE) or ""
+                  ).pack(side="left", padx=(0, 10))
+        text = ttk.Frame(head)
+        text.pack(side="left", fill="x", expand=True)
+        ttk.Label(text, text=self.name, style="Head.TLabel").pack(anchor="w")
+        ttk.Label(text, foreground=GREY,
+                  text="%s   -   %s   -   slot %d of the %s"
+                       % (self.item_id, record.category, record.index,
+                          app.save.items.arrays[record.array_index].label)
+                  ).pack(anchor="w")
+
+        # The footer is built first because every page redraws it as it fills,
+        # and packed to the bottom so it still comes out under the pages.
+        foot = ttk.Frame(self, padding=10)
+        foot.pack(side="bottom", fill="x")
+        self.lbl_sum = ttk.Label(foot, text="", foreground=GREY, wraplength=440,
+                                 justify="left")
+        self.lbl_sum.pack(side="left")
+        ttk.Button(foot, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(foot, text="Apply", command=self.apply
+                   ).pack(side="right", padx=6)
+
+        book = ttk.Notebook(self)
+        book.pack(fill="both", expand=True, padx=10, pady=8)
+        book.add(self._page_stats(book), text="Stats")
+        book.add(self._page_abilities(book), text="Abilities")
+        book.add(self._page_aging(book), text="Aging")
+        self.describe()
+
+    # ------------------------------------------------------------- page one
+    def _page_stats(self, parent):
+        f = ttk.Frame(parent, padding=12)
+        ttk.Label(f, text="grade").grid(row=0, column=0, sticky="w")
+        self.cmb_title = ttk.Combobox(f, state="readonly", width=36)
+        self.cmb_title.grid(row=0, column=1, sticky="w", padx=6)
+        self.cmb_title.bind("<<ComboboxSelected>>", lambda _e: self.describe())
+        self._titles = self._fill_titles()
+
+        ttk.Label(f, text="quality").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.cmb_quality = ttk.Combobox(f, state="readonly", width=36,
+                                        values=list(QUALITY_NAMES))
+        self.cmb_quality.current(min(self.rec.quality, len(QUALITY_NAMES) - 1))
+        self.cmb_quality.grid(row=1, column=1, sticky="w", padx=6, pady=(8, 0))
+        self.cmb_quality.bind("<<ComboboxSelected>>", lambda _e: self.describe())
+
+        self.lbl_stat = ttk.Label(f, text="", style="Head.TLabel")
+        self.lbl_stat.grid(row=2, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        ttk.Label(f, foreground=GREY, wraplength=596, justify="left",
+                  text="No attack number is stored in the save. The record"
+                       " keeps the grade, and the game reads the item's attack"
+                       " or power from its own table at that grade -- so a"
+                       " piece written at a grade the item has no entry for"
+                       " reads as zero in game, whatever else is on it. The"
+                       " figure above is that table entry: the game's own card"
+                       " can print a smaller one (a Legend True Sword of Time"
+                       " is 750 here and 562 in game), so read it as the tier"
+                       " this piece is on rather than as the printed number."
+                       " Quality is the crafting mark: everything the game"
+                       " itself hands out is Quality 0."
+                  ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        desc = namedb.get().description(self.item_id, self.lang) or ""
+        ttk.Label(f, foreground=GREY, wraplength=596, justify="left",
+                  text=desc.replace("\r\n", " ").replace("\n", " ")
+                  ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        return f
+
+    def _fill_titles(self):
+        """The grades, each with what it buys.  Mirrors the slot editor's row."""
+        choices = gear.title_choices(self.item_id)
+        sentinel = gear.get().sentinel
+        label = gear.stat_label(self.item_id)
+        rows = ["%d  %s" % (0, items.ITEM_TITLES[0])]
+        titles = [0]
+        for value, name, stat in choices:
+            rows.append("%d  %-12s %s %s"
+                        % (value, name, label, "-" if stat <= sentinel else stat))
+            titles.append(value)
+        if not choices:
+            rows = ["%d  %s" % (i, n) for i, n in enumerate(items.ITEM_TITLES)]
+            titles = list(range(len(items.ITEM_TITLES)))
+        self.cmb_title["values"] = rows
+        have = self.rec.item_title
+        self.cmb_title.current(titles.index(have) if have in titles else 0)
+        return titles
+
+    def title_choice(self) -> int:
+        i = self.cmb_title.current()
+        return self._titles[i] if 0 <= i < len(self._titles) else 0
+
+    def quality_choice(self) -> int:
+        return max(0, self.cmb_quality.current())
+
+    # ------------------------------------------------------------- page two
+    def _page_abilities(self, parent):
+        f = ttk.Frame(parent, padding=12)
+        top = ttk.Frame(f)
+        top.pack(fill="x")
+        ttk.Label(top, text="search").pack(side="left")
+        self.ent_find = ttk.Entry(top, width=24)
+        self.ent_find.pack(side="left", padx=6)
+        self.ent_find.bind("<KeyRelease>", lambda _e: self.refill_slots())
+        ttk.Button(top, text="Best for this piece", command=self.on_best
+                   ).pack(side="left", padx=(12, 0))
+        ttk.Button(top, text="Clear all", command=self.on_clear_slots
+                   ).pack(side="left", padx=6)
+
+        self.cmb_slots, self.lbl_slots = [], []
+        for i in range(abilities.SLOTS):
+            row = ttk.LabelFrame(f, text=SLOT_LABELS[i], padding=8)
+            row.pack(fill="x", pady=(10, 0))
+            cmb = ttk.Combobox(row, state="readonly", width=56)
+            cmb.pack(anchor="w")
+            cmb.bind("<<ComboboxSelected>>", lambda _e: self.describe())
+            lbl = ttk.Label(row, text="", foreground=GREY, wraplength=596,
+                            justify="left")
+            lbl.pack(anchor="w", pady=(4, 0))
+            self.cmb_slots.append(cmb)
+            self.lbl_slots.append(lbl)
+            self._slot_ids.append([])
+        self.lbl_best = ttk.Label(f, text="", foreground=GREY, wraplength=596,
+                                  justify="left")
+        self.lbl_best.pack(anchor="w", pady=(10, 0))
+        self.refill_slots(self.db.normalise(self.rec.grant_skills))
+        return f
+
+    def slot_choices(self):
+        """The ids to offer, the ones that belong on this kind of gear first."""
+        query = self.ent_find.get().strip() if hasattr(self, "ent_find") else ""
+        return self.db.search(query, self.lang, self.bag)
+
+    def refill_slots(self, keep=None):
+        """Rebuild the three dropdowns, keeping what each one already holds.
+
+        The search narrows what is on offer, so an ability already in a slot
+        stays at the top of its own list whether it matches or not: a slot must
+        never lose its value because someone typed in the search box.
+        """
+        keep = self.picked() if keep is None else keep
+        offer = self.slot_choices()
+        for i, cmb in enumerate(self.cmb_slots):
+            here = keep[i] if i < len(keep) else abilities.NO_ABILITY
+            ids = [abilities.NO_ABILITY] + [a for a in offer if a != here]
+            if here != abilities.NO_ABILITY:
+                ids.insert(1, here)
+            self._slot_ids[i] = ids
+            cmb["values"] = [self.label_for(a) for a in ids]
+            cmb.current(ids.index(here) if here in ids else 0)
+        self.describe()
+
+    def label_for(self, ability: str) -> str:
+        if ability == abilities.NO_ABILITY:
+            return "None  -  empty slot"
+        level = self.db.level(ability)
+        return "%s%s%s   [%s]" % (self.db.name(ability, self.lang),
+                                  " *" if self.db.is_glossed(ability) else "",
+                                  "  lv %d" % level if level else "", ability)
+
+    def picked(self):
+        out = []
+        for i, cmb in enumerate(self.cmb_slots):
+            ids = self._slot_ids[i]
+            j = cmb.current()
+            out.append(ids[j] if 0 <= j < len(ids) else abilities.NO_ABILITY)
+        return out
+
+    def on_best(self):
+        self.refill_slots(self.db.normalise(self.rec.best_abilities()))
+
+    def on_clear_slots(self):
+        self.refill_slots([abilities.NO_ABILITY] * abilities.SLOTS)
+
+    # ----------------------------------------------------------- page three
+    def _page_aging(self, parent):
+        f = ttk.Frame(parent, padding=12)
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        ttk.Label(row, text="vintage").pack(side="left")
+        self.spn_age = ttk.Spinbox(row, from_=0, to=65535, width=8,
+                                   command=self.describe)
+        self.spn_age.pack(side="left", padx=6)
+        self.spn_age.bind("<KeyRelease>", lambda _e: self.describe())
+        self.set_age(self.rec.ripening_age)
+        ttk.Label(row, text="years").pack(side="left")
+        ttk.Button(row, text="Aging Altar (%d years)" % items.ALTAR_AGE,
+                   command=lambda: self.set_age(items.ALTAR_AGE, True)
+                   ).pack(side="left", padx=(14, 0))
+        ttk.Button(row, text="Fresh (0)",
+                   command=lambda: self.set_age(0, True)).pack(side="left", padx=6)
+        ttk.Label(f, foreground=GREY, wraplength=596, justify="left",
+                  text="The Aging Altar in the Plant Dungeon buries a piece and"
+                       " gives it back with a vintage -- the 'Aging: <n>-year"
+                       " vintage' line on the card -- and abilities rolled from"
+                       " its own table for that kind of gear. They are separate"
+                       " fields in the record and separate pages here: the"
+                       " vintage is this one, the abilities the one before it."
+                       " %d years is what the Altar itself produces; the field"
+                       " is a uint16, so more fits, but nothing in game writes"
+                       " it." % items.ALTAR_AGE
+                  ).pack(anchor="w", pady=(12, 0))
+        self.var_burying = tk.BooleanVar(value=bool(self.rec.is_burying))
+        ttk.Checkbutton(f, text="buried at the Altar right now (isBurying)",
+                        variable=self.var_burying, command=self.describe
+                        ).pack(anchor="w", pady=(14, 0))
+        ttk.Label(f, foreground=GREY, wraplength=596, justify="left",
+                  text="Set while a piece is in the ground rather than in the"
+                       " bag. Leave it off unless the piece is meant to be"
+                       " buried."
+                  ).pack(anchor="w")
+        return f
+
+    def set_age(self, years, redraw=False):
+        self.spn_age.delete(0, "end")
+        self.spn_age.insert(0, str(int(years)))
+        if redraw:
+            self.describe()
+
+    def age_choice(self) -> int:
+        return max(0, min(65535, as_int(self.spn_age.get())))
+
+    # ---------------------------------------------------------------- write
+    def describe(self):
+        """Say what Apply would write, and name each ability under its slot.
+
+        Runs while the pages are still being built, so every part of it is
+        skipped until the widgets it reads exist.
+        """
+        if not hasattr(self, "cmb_slots"):
+            return
+        picks = self.picked()
+        for i, ability in enumerate(picks):
+            if ability == abilities.NO_ABILITY:
+                self.lbl_slots[i].configure(text=SLOT_NOTES[i])
+                continue
+            bits = [self.db.description(ability, self.lang) or SLOT_NOTES[i]]
+            if self.db.is_glossed(ability):
+                bits.append("* the editor's own words: no shipped text table"
+                            " names this one.")
+            seen = self.db.bags(ability)
+            bits.append("seen on %s." % ", ".join(seen) if seen
+                        else "no save here carries this one on a piece.")
+            self.lbl_slots[i].configure(text="  ".join(bits))
+
+        title = self.title_choice()
+        stat = gear.attack(self.item_id, title)
+        if stat is None:
+            shown = "no stat list for this item"
+        elif stat <= gear.get().sentinel:
+            shown = "%s -  (this grade has no stats for this item)" % \
+                    gear.stat_label(self.item_id)
+        else:
+            shown = "%s %d" % (gear.stat_label(self.item_id), stat)
+        self.lbl_stat.configure(text="%s   ->   %s"
+                                     % (items.ITEM_TITLES[title], shown))
+
+        best = self.rec.best_abilities()
+        how = ("the Aging Altar's own table for this kind of gear"
+               if self.db.suggestion_source(self.item_id) == "altar"
+               else "what real saves carry on this kind of gear, because the"
+                    " Altar has no table for it")
+        self.lbl_best.configure(
+            text="Best for this piece uses %s: %s"
+                 % (how, ", ".join(self.db.name(a, self.lang) for a in best)
+                    or "nothing known"))
+
+        named = [a for a in picks if a != abilities.NO_ABILITY]
+        age = self.age_choice() if hasattr(self, "spn_age") else self.rec.ripening_age
+        self.lbl_sum.configure(
+            text="will write: %s, quality %d, %d-year vintage, %s"
+                 % (items.ITEM_TITLES[title], self.quality_choice(), age,
+                    "%d abilit%s" % (len(named), "y" if len(named) == 1 else "ies")
+                    if named else "no abilities"))
+
+    def apply(self):
+        self.rec.item_title = self.title_choice()
+        self.rec.quality = self.quality_choice()
+        self.rec.ripening_age = self.age_choice()
+        self.rec.is_burying = 1 if self.var_burying.get() else 0
+        self.rec.grant_skills = [a for a in self.picked()
+                                 if a != abilities.NO_ABILITY]
+        self.applied = True
+        self.destroy()
 
 
 class App(ttk.Frame):
@@ -420,29 +749,23 @@ class App(ttk.Frame):
                                   justify="left")
         self.lbl_desc.grid(row=2, column=0, columnspan=8, sticky="w", pady=(6, 8))
 
-        # Super OP mode.  The three things it writes are the three the Aging
-        # Altar writes, so they are spelled out rather than hidden behind the
-        # tick box: the grade the stats are read at, the vintage, and the
-        # skills.  The tick box drives the two boxes next to it, and both Apply
-        # buttons below honour it.
+        # What a piece of gear carries beyond its grade -- its abilities and
+        # its vintage -- is a card of its own rather than a row of boxes here,
+        # because that is the shape the game shows it in and there are three
+        # pages of it.  This line is the read-only version of that card.
         op = ttk.Frame(ed)
         op.grid(row=3, column=0, columnspan=8, sticky="w", pady=(0, 8))
-        self.var_op = tk.BooleanVar(value=False)
-        ttk.Checkbutton(op, text="Super OP Weapon Mode", variable=self.var_op,
-                        command=self.on_toggle_op).pack(side="left")
-        ttk.Label(op, text="aged").pack(side="left", padx=(14, 2))
-        self.spn_age = ttk.Spinbox(op, from_=0, to=65535, width=7,
-                                   command=self.on_age_typed)
-        self.spn_age.pack(side="left")
-        self.spn_age.bind("<KeyRelease>", lambda _e: self.on_age_typed())
-        ttk.Label(op, text="years").pack(side="left", padx=(2, 0))
-        self.lbl_op = ttk.Label(op, text="", foreground=GREY)
-        self.lbl_op.pack(side="left", padx=(14, 0))
+        self.lbl_op = ttk.Label(op, text="", foreground=GREY, wraplength=700,
+                                justify="left")
+        self.lbl_op.pack(side="left")
 
         btns = ttk.Frame(ed)
         btns.grid(row=4, column=0, columnspan=8, sticky="w")
         ttk.Button(btns, text="Apply to slot",
                    command=self.on_apply_slot).pack(side="left")
+        # Shown only on a slot that has gear in it -- see sync_bulk_buttons.
+        self.btn_stats = ttk.Button(btns, text="Edit stats...",
+                                    command=self.on_edit_stats)
         ttk.Button(btns, text="Clear slot",
                    command=self.on_clear_slot).pack(side="left", padx=6)
         ttk.Button(btns, text="Add to first free slot",
@@ -486,10 +809,15 @@ class App(ttk.Frame):
         self.cmb_bulk_title.current(0)
         self.cmb_bulk_title.bind("<<ComboboxSelected>>",
                                  lambda _e: self.describe_bulk())
-        self.var_bulk_op = tk.BooleanVar(value=False)
-        self.chk_bulk_op = ttk.Checkbutton(
-            row, text="Super OP Weapon Mode", variable=self.var_bulk_op,
-            command=self.describe_bulk)
+        # The old Super OP tick box wrote a vintage among other things; the
+        # vintage is the part a whole bag can sensibly be given at once, so it
+        # is what is left here, as the number it always was.
+        self.lbl_bulk_age = ttk.Label(row, text="aged")
+        self.spn_bulk_age = ttk.Spinbox(row, from_=0, to=65535, width=7,
+                                        command=self.describe_bulk)
+        self.spn_bulk_age.bind("<KeyRelease>", lambda _e: self.describe_bulk())
+        self.spn_bulk_age.insert(0, "0")
+        self.lbl_bulk_years = ttk.Label(row, text="years")
 
         # Right-hand end of the row, like Fix gear... above it: the button
         # keeps its width whatever the window is narrowed to, and it is the
@@ -1518,12 +1846,20 @@ class App(ttk.Frame):
             self.spn_bulk_qty.delete(0, "end")
             self.spn_bulk_qty.insert(
                 0, str(STACK_FULL if kind in BULK_FULL_STACK else 1))
-            for w in (self.lbl_bulk_grade, self.cmb_bulk_title, self.chk_bulk_op):
+            for w in (self.lbl_bulk_grade, self.cmb_bulk_title,
+                      self.lbl_bulk_age, self.spn_bulk_age, self.lbl_bulk_years):
                 w.pack_forget()
-                if equipment:
-                    w.pack(side="left", padx=(12, 0))
+            if equipment:
+                for w, pad in ((self.lbl_bulk_grade, 12), (self.cmb_bulk_title, 4),
+                               (self.lbl_bulk_age, 12), (self.spn_bulk_age, 4),
+                               (self.lbl_bulk_years, 2)):
+                    w.pack(side="left", padx=(pad, 0))
             self.describe_bulk()
         self.bulk.pack(side="bottom", fill="x", pady=(8, 0), before=self.frm_slot)
+
+    def bulk_age(self) -> int:
+        """The vintage the fill leaves every piece at.  0 is a fresh one."""
+        return max(0, min(65535, as_int(self.spn_bulk_age.get())))
 
     def bulk_title(self):
         """The grade the fill spawns at, or None for each item's own best."""
@@ -1548,10 +1884,9 @@ class App(ttk.Frame):
                 "of each item",
                 "grade: %s" % (items.ITEM_TITLES[title] if title is not None
                                else "the best one each item has stats for")]
-        if self.var_bulk_op.get():
-            bits.append("a %d-year vintage, top quality and the three skills "
-                        "the Aging Altar rolls for that kind of gear"
-                        % items.OP_RIPENING_AGE)
+        if self.bulk_age():
+            bits.append("a %d-year vintage on every one of them (abilities are "
+                        "per piece, under Edit stats...)" % self.bulk_age())
         warning = self.grade_note(self._bulk_kind, title)
         if warning:
             bits.append(warning)
@@ -1784,18 +2119,12 @@ class App(ttk.Frame):
         self.ent_id.insert(0, "" if r.empty else r.item_id)
         self.spn_qty.delete(0, "end")
         self.spn_qty.insert(0, str(r.quantity))
-        self.set_age(r.ripening_age if r.equipment else 0)
         self._last_id = r.item_id
         self.show_item(r.item_id, r.item_title, r)
 
     def on_id_typed(self):
-        item_id = self.ent_id.get().strip()
-        if item_id != getattr(self, "_last_id", None):
-            # The vintage belongs to the piece, not to the box: a different id
-            # starts from nothing rather than inheriting the last slot's years.
-            self._last_id = item_id
-            self.set_age(items.OP_RIPENING_AGE if self.var_op.get() else 0)
-        self.show_item(item_id)
+        self._last_id = self.ent_id.get().strip()
+        self.show_item(self._last_id)
 
     def fill_titles(self, item_id, current=None):
         """Offer the grades this item has stats for, with what each one buys.
@@ -1829,53 +2158,44 @@ class App(ttk.Frame):
         titles = getattr(self, "_titles", [0])
         return titles[i] if 0 <= i < len(titles) else 0
 
-    # ------------------------------------------------------ Super OP mode
-    def set_age(self, years):
-        self.spn_age.delete(0, "end")
-        self.spn_age.insert(0, str(int(years)))
-
-    def age_choice(self) -> int:
-        return max(0, min(65535, as_int(self.spn_age.get())))
-
-    def on_age_typed(self):
-        self.describe_op(self.ent_id.get().strip())
-
-    def on_toggle_op(self):
-        """Fill the grade and the vintage in, so the tick box shows its work."""
-        item_id = self.ent_id.get().strip()
-        if self.var_op.get():
-            best = gear.best_title(item_id)
-            if best and best in getattr(self, "_titles", []):
-                self.cmb_title.current(self._titles.index(best))
-            self.set_age(items.OP_RIPENING_AGE)
-        self.describe_op(item_id)
-
+    # ----------------------------------------------------- gear beyond grade
     def describe_op(self, item_id, rec=None):
-        """Say what Super OP would write, or what the selected piece already has."""
-        if not item_id:
-            self.lbl_op.configure(text="")
-            return
-        skills = gear.op_skills(item_id)
-        if self.var_op.get():
-            best = gear.best_title(item_id)
-            stat = gear.attack(item_id, best) if best else None
-            bits = [items.ITEM_TITLES[best] if best else "grade as chosen"]
-            if stat is not None:
-                bits.append("%s %d" % (gear.stat_label(item_id), stat))
-            bits.append("%d-year vintage" % self.age_choice())
-            bits.append("%d skills" % len(skills) if skills
-                        else "no skill roll for this kind")
-            self.lbl_op.configure(text="will write: " + ", ".join(bits))
-            return
-        if rec is not None and rec.equipment and not rec.empty:
-            have = [s for s in rec.grant_skills if s != items.NO_SKILL]
+        """The card line under the slot editor: what this piece already carries.
+
+        Only what is in the record -- the vintage, the quality and the
+        abilities in its three slots.  Changing any of them is *Edit stats...*,
+        which shows the same three on the three pages the game shows them on.
+        """
+        self.btn_stats.pack_forget()
+        if rec is None or not rec.equipment or rec.empty:
             self.lbl_op.configure(
-                text="in this slot: %d-year vintage, quality %d, %s"
-                     % (rec.ripening_age, rec.quality,
-                        ", ".join(have) if have else "no skills"))
+                text="" if not item_id else
+                     "equipment carries abilities and an Aging Altar vintage; "
+                     "put it in the slot and Edit stats... opens its card")
             return
+        self.btn_stats.pack(side="left", padx=(18, 0))
+        db = abilities.get()
+        have = [a for a in rec.grant_skills if a != items.NO_SKILL]
         self.lbl_op.configure(
-            text="" if not skills else "aging roll: " + ", ".join(skills))
+            text="in this slot: %d-year vintage, quality %d, %s"
+                 % (rec.ripening_age, rec.quality,
+                    ", ".join(db.name(a, self.lang()) for a in have)
+                    if have else "no abilities"))
+
+    def on_edit_stats(self):
+        """Open the item card for the selected piece and write what it says."""
+        def go():
+            self.need()
+            rec = self.selected_record()
+            if not rec.equipment or rec.empty:
+                raise RuntimeError("select a piece of equipment first")
+            dlg = StatsDialog(self.master, self, rec)
+            self.master.wait_window(dlg)
+            if dlg.applied:
+                self.refresh_items()
+                self.touch("slot %d = %s%s"
+                           % (rec.index, rec.item_id, self.gear_note(rec)))
+        self.guard(go)
 
     def show_item(self, item_id, title=None, rec=None):
         db = namedb.get()
@@ -1912,14 +2232,6 @@ class App(ttk.Frame):
             if item_id and item_id != "None":
                 r.place(item_id, qty, r.instance_id or sf.items.next_instance_id(),
                         self.title_choice())
-                if r.equipment:
-                    # The vintage is editable on its own, so it is written
-                    # whether or not Super OP is on -- what the tick box adds is
-                    # the skills and the quality.
-                    if self.var_op.get():
-                        r.make_super_op(age=self.age_choice(), keep_title=True)
-                    else:
-                        r.ripening_age = self.age_choice()
                 self.warn_wrong_bag(r)
             else:
                 r.clear()
@@ -1935,9 +2247,10 @@ class App(ttk.Frame):
         bits = [rec.title_name]
         if rec.ripening_age:
             bits.append("%d-year" % rec.ripening_age)
-        have = [s for s in rec.grant_skills if s != items.NO_SKILL]
+        db = abilities.get()
+        have = [a for a in rec.grant_skills if a != items.NO_SKILL]
         if have:
-            bits.append(", ".join(have))
+            bits.append(", ".join(db.name(a, self.lang()) for a in have))
         return "  (%s)" % "; ".join(bits)
 
     def on_clear_slot(self):
@@ -1945,7 +2258,6 @@ class App(ttk.Frame):
             self.need()
             r = self.selected_record()
             r.clear()
-            self.set_age(0)
             self.refresh_items()
             self.touch("cleared slot %d" % r.index)
         self.guard(go)
@@ -1959,9 +2271,7 @@ class App(ttk.Frame):
             # "Give" files the item where the game would, which is not always
             # the container being looked at, so follow it there.
             rec = sf.give_item(item_id, max(1, as_int(self.spn_qty.get(), 1)),
-                               None, self.title_choice(), self.var_op.get())
-            if rec.equipment:
-                rec.ripening_age = self.age_choice()
+                               None, self.title_choice())
             if rec.array_index != (self.cur_array().index if self.cur_array() else -1):
                 self.cmb_cont.current(rec.array_index)
             self.refresh_items()
@@ -2035,7 +2345,7 @@ class App(ttk.Frame):
             equipment = self.bulk_equipment(arr)
             amount = max(1, as_int(self.spn_bulk_qty.get(), 1))
             title = self.bulk_title() if equipment else None
-            super_op = equipment and bool(self.var_bulk_op.get())
+            age = self.bulk_age() if equipment else None
 
             # Equipment does not stack, so asking for copies of each can want
             # more slots than the bag has -- and what does not fit is dropped in
@@ -2050,13 +2360,12 @@ class App(ttk.Frame):
             self.master.config(cursor="watch")
             self.master.update_idletasks()
             try:
-                got = sf.give_every(kind, amount, title=title,
-                                    super_op=super_op)
+                got = sf.give_every(kind, amount, title=title, age=age)
             finally:
                 self.master.config(cursor="")
             self.cmb_cont.current(got["container"])
             self.refresh_items()
-            done = ("regraded" if equipment and (title is not None or super_op)
+            done = ("regraded" if equipment and (title is not None or age)
                     else "topped up")
             note = "%d added, %d %s, of %d %s" % (
                 got["added"], got["topped_up"], done, got["total"], kind)

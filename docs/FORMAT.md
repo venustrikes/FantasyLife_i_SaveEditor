@@ -306,6 +306,54 @@ one, so it is a slot count and not a validity flag; the editor reads it but
 does not write it. Gear in a complete save carries real `es_*` skills with
 `equipAbilityNum` at 0, so the skills do not depend on it.
 
+### The number on the card is not the number in the table
+
+`physicalOffenseList[title - 1]` is what the game *reads*; it is not always what
+the card *prints*. The True Sword of Time (`iwp02000220`) is `[1,1,1,1,750]` and
+a Legend one in a real Switch save shows **562** on its card — exactly three
+quarters. Whatever scales it (the piece's quality, the wielder's Life, something
+else again) is not in the save: every field of that record is accounted for
+above, and none of them holds 562. So the editors show the table entry and say
+so, as the tier the piece is on rather than as the printed number.
+
+### grantSkillId is what the card's second page lists
+
+The three-element `grantSkillId` array holds the piece's **equipment
+abilities** — *Dark Damage +*, *Woodcutting +* — one `es_*` id each, `"None"`
+for an empty slot. In the game's card they are three rows: two numbered ability
+slots and a third marked with the Aging Altar's leaf.
+
+The save agrees with that shape. Across 507 game-written equipment records in a
+complete Switch save, **only slots 1 and 2 are ever filled** — 304 pieces with
+none, 123 with one, 80 with two, and not one with three. No save here has a
+piece the Altar has finished, so which slot the Altar's own roll lands in is not
+proven; the editors offer all three and label the third for what the card calls
+it.
+
+Which ids exist cannot be read the way the stat tables were. The PC release
+ships an **encrypted pak index** and the ability table is in no executable, so
+`data/fli_abilities.json.gz` is built by `tools/build_abilities.py` from the
+three places the ids can still be read, and each entry records which:
+
+| `from` | Where it was found | Count |
+|---|---|---|
+| `save` | the game wrote it into a real equipment record | 110 |
+| `altar` | it is in a `GDSAddSkillLotTable` roll | 6 |
+| `text` | the game's own text tables name it, no save here carries it | 90 |
+
+An id is a **family and a level** — `es_attack_up06` is the sixth *Attack +* —
+and the text tables name only the family, under the family itself, its first
+level with the underscore or without it, depending on the family. The database
+records which key hits so the lookup is a dictionary hit rather than a rule: 173
+of the 206 are named that way, about a fifth are described (with the game's
+`<SKILL_PARAM_1>` placeholders left standing, because the numbers behind them
+are in neither the save nor the executable), and the remaining fourteen families
+carry the editor's own words, flagged as such.
+
+`addEquipStatus` looks like it should hold extra stats and does not: across
+every save read here it is one entry whose `value` is **0**, with a `kind` that
+varies by bag (0, 3, 4, 5, 7, 8). It is carried through untouched.
+
 `quality` is `EItemQualityType` — `Quality_0` … `Quality_3`. Everything the
 game hands out is 0; crafted gear carries 1–3, alongside a non-zero
 `creatorSignNo` (the maker's signature).
